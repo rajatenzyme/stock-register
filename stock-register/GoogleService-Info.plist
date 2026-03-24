@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CLIENT_ID</key>
+	<string>450149736929-l2rbgj6nbunbap92e435jq4ifg6nk6ni.apps.googleusercontent.com</string>
+	<key>REVERSED_CLIENT_ID</key>
+	<string>com.googleusercontent.apps.450149736929-l2rbgj6nbunbap92e435jq4ifg6nk6ni</string>
+	<key>API_KEY</key>
+	<string>AIzaSyDcTjFnjXc9x_RRETmiIwu9Blhw35ePAyw</string>
+	<key>GCM_SENDER_ID</key>
+	<string>331228285643</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>stock-register.stock-register</string>
+	<key>PROJECT_ID</key>
+	<string>inventory-management-4ac5b</string>
+	<key>STORAGE_BUCKET</key>
+	<string>inventory-management-4ac5b.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true></true>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true></true>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:331228285643:ios:3ccb3a17fe2fa5d0ba694e</string>
+</dict>
+</plist>

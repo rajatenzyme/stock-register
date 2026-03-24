@@ -1,12 +1,42 @@
-// InventoryApp.swift
 import SwiftUI
 import PDFKit
+import FirebaseCore
+import GoogleSignIn
+
+class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
+        FirebaseApp.configure()
+        
+        if let clientID = FirebaseApp.app()?.options.clientID {
+            GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
+        }
+        
+        return true
+    }
+    
+    func application(_ app: UIApplication,
+                     open url: URL,
+                     options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        return GIDSignIn.sharedInstance.handle(url)
+    }
+}
 
 @main
 struct InventoryApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    @StateObject private var authManager = AuthenticationManager.shared
+    
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(authManager)
+                .onOpenURL { url in
+                    GIDSignIn.sharedInstance.handle(url)
+                }
+                .task {
+                    await authManager.restorePreviousSignIn()
+                }
         }
     }
 }
@@ -108,8 +138,6 @@ class InventoryViewModel: ObservableObject {
     @Published var transactions: [Transaction] = []
     @Published var businesses: [Business] = []
     @Published var currentBusinessId: UUID?
-    @Published var currentUser: String = "User"
-    @Published var userEmail: String = ""
     
     var currentBusiness: Business? {
         guard let id = currentBusinessId else { return businesses.first }
@@ -175,7 +203,7 @@ class InventoryViewModel: ObservableObject {
     func generatePDF(title: String, content: String) -> URL? {
         let pdfMetaData = [
             kCGPDFContextCreator: "Inventory Manager",
-            kCGPDFContextAuthor: currentUser,
+            kCGPDFContextAuthor: "User",
             kCGPDFContextTitle: title
         ]
         let format = UIGraphicsPDFRendererFormat()
@@ -311,12 +339,6 @@ class InventoryViewModel: ObservableObject {
             .reduce(0) { $0 + $1.quantity }
     }
     
-    func logout() {
-        currentUser = "User"
-        userEmail = ""
-        saveData()
-    }
-    
     func saveData() {
         if let itemsData = try? JSONEncoder().encode(items) {
             UserDefaults.standard.set(itemsData, forKey: "inventoryItems")
@@ -330,8 +352,6 @@ class InventoryViewModel: ObservableObject {
         if let currentBusinessId = currentBusinessId {
             UserDefaults.standard.set(currentBusinessId.uuidString, forKey: "currentBusinessId")
         }
-        UserDefaults.standard.set(currentUser, forKey: "currentUser")
-        UserDefaults.standard.set(userEmail, forKey: "userEmail")
     }
     
     private func loadData() {
@@ -350,12 +370,6 @@ class InventoryViewModel: ObservableObject {
         if let businessIdString = UserDefaults.standard.string(forKey: "currentBusinessId"),
            let businessId = UUID(uuidString: businessIdString) {
             currentBusinessId = businessId
-        }
-        if let user = UserDefaults.standard.string(forKey: "currentUser") {
-            currentUser = user
-        }
-        if let email = UserDefaults.standard.string(forKey: "userEmail") {
-            userEmail = email
         }
     }
     
@@ -1812,6 +1826,7 @@ struct EditItemView: View {
 
 struct SettingsView: View {
     @ObservedObject var viewModel: InventoryViewModel
+    @EnvironmentObject var authManager: AuthenticationManager
     @State private var showingAddBusiness = false
     @State private var showingLogoutAlert = false
     @State private var showingLoginSheet = false
@@ -1820,7 +1835,7 @@ struct SettingsView: View {
         NavigationView {
             List {
                 Section {
-                    if viewModel.userEmail.isEmpty {
+                    if !authManager.isSignedIn {
                         Button(action: { showingLoginSheet = true }) {
                             HStack {
                                 Image(systemName: "person.circle.fill")
@@ -1839,13 +1854,27 @@ struct SettingsView: View {
                         }
                     } else {
                         HStack {
-                            Image(systemName: "person.circle.fill")
-                                .font(.largeTitle)
-                                .foregroundColor(.blue)
+                            if let imageURL = authManager.userProfileImageURL {
+                                AsyncImage(url: imageURL) { image in
+                                    image
+                                        .resizable()
+                                        .scaledToFill()
+                                } placeholder: {
+                                    Image(systemName: "person.circle.fill")
+                                        .font(.largeTitle)
+                                        .foregroundColor(.blue)
+                                }
+                                .frame(width: 50, height: 50)
+                                .clipShape(Circle())
+                            } else {
+                                Image(systemName: "person.circle.fill")
+                                    .font(.largeTitle)
+                                    .foregroundColor(.blue)
+                            }
                             VStack(alignment: .leading) {
-                                Text(viewModel.currentUser)
+                                Text(authManager.userDisplayName)
                                     .font(.headline)
-                                Text(viewModel.userEmail)
+                                Text(authManager.userEmail)
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
@@ -1896,10 +1925,12 @@ struct SettingsView: View {
                     }
                 }
                 
-                Section {
-                    Button(action: { showingLogoutAlert = true }) {
-                        Label("Logout", systemImage: "arrow.right.square")
-                            .foregroundColor(.red)
+                if authManager.isSignedIn {
+                    Section {
+                        Button(action: { showingLogoutAlert = true }) {
+                            Label("Sign Out", systemImage: "arrow.right.square")
+                                .foregroundColor(.red)
+                        }
                     }
                 }
             }
@@ -1908,15 +1939,15 @@ struct SettingsView: View {
                 AddBusinessView(viewModel: viewModel)
             }
             .sheet(isPresented: $showingLoginSheet) {
-                GoogleSignInView(viewModel: viewModel)
+                GoogleSignInView()
             }
-            .alert("Logout", isPresented: $showingLogoutAlert) {
+            .alert("Sign Out", isPresented: $showingLogoutAlert) {
                 Button("Cancel", role: .cancel) {}
-                Button("Logout", role: .destructive) {
-                    viewModel.logout()
+                Button("Sign Out", role: .destructive) {
+                    authManager.signOut()
                 }
             } message: {
-                Text("Are you sure you want to logout?")
+                Text("Are you sure you want to sign out?")
             }
         }
     }
@@ -1932,63 +1963,69 @@ struct SettingsView: View {
 }
 
 struct GoogleSignInView: View {
-    @ObservedObject var viewModel: InventoryViewModel
+    @EnvironmentObject var authManager: AuthenticationManager
     @Environment(\.dismiss) var dismiss
-    
-    @State private var email = ""
-    @State private var name = ""
     
     var body: some View {
         NavigationView {
             VStack(spacing: 24) {
-                Image(systemName: "person.circle.fill")
+                Spacer()
+                
+                Image(systemName: "cube.box.fill")
                     .font(.system(size: 80))
                     .foregroundColor(.blue)
                 
-                Text("Sign in to sync your data")
+                Text("Welcome to Inventory Manager")
                     .font(.title2)
                     .fontWeight(.bold)
                 
-                Text("Note: Google Sign-In requires additional setup with Firebase/Google Cloud Platform. For now, you can enter your details manually.")
-                    .font(.caption)
+                Text("Sign in with your Google account to sync your data across devices")
+                    .font(.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
-                    .padding()
+                    .padding(.horizontal)
                 
-                VStack(spacing: 16) {
-                    TextField("Name", text: $name)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .padding(.horizontal)
-                    
-                    TextField("Email", text: $email)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .keyboardType(.emailAddress)
-                        .autocapitalization(.none)
+                if let error = authManager.errorMessage {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                        .multilineTextAlignment(.center)
                         .padding(.horizontal)
                 }
                 
                 Button(action: {
-                    viewModel.currentUser = name.isEmpty ? "User" : name
-                    viewModel.userEmail = email
-                    viewModel.saveData()
-                    dismiss()
+                    Task {
+                        await authManager.signIn()
+                        if authManager.isSignedIn {
+                            dismiss()
+                        }
+                    }
                 }) {
-                    Text("Sign In")
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.blue)
-                        .cornerRadius(12)
+                    HStack(spacing: 12) {
+                        if authManager.isLoading {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        } else {
+                            Image(systemName: "g.circle.fill")
+                                .font(.title2)
+                            Text("Sign in with Google")
+                                .fontWeight(.semibold)
+                        }
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.blue)
+                    .cornerRadius(12)
                 }
                 .padding(.horizontal)
-                .disabled(email.isEmpty)
+                .disabled(authManager.isLoading)
                 
-                Text("To integrate real Google Sign-In:\n1. Set up Firebase project\n2. Add GoogleSignIn SDK\n3. Configure OAuth credentials")
-                    .font(.caption2)
+                Spacer()
+                
+                Text("Your data stays private and secure")
+                    .font(.caption)
                     .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding()
                 
                 Spacer()
             }

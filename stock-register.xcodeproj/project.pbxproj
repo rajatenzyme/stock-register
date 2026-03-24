@@ -8,17 +8,30 @@
 
 /* Begin PBXBuildFile section */
 		04AA04672F707262002DB500 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 04AA04662F707262002DB500 /* FirebaseAuth */; };
-		04AA046A2F710D2E002DB500 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 04AA04692F710D2E002DB500 /* GoogleSignIn */; };
-		04AA046C2F710D2E002DB500 /* GoogleSignInSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 04AA046B2F710D2E002DB500 /* GoogleSignInSwift */; };
+		67F3B4252F71433700B35735 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 67F3B4242F71433700B35735 /* GoogleSignIn */; };
+		67F3B4272F71433700B35735 /* GoogleSignInSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 67F3B4262F71433700B35735 /* GoogleSignInSwift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		04AF6F052EBD3725006AD3AE /* stock-register.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "stock-register.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		04AF6F082EBD3725006AD3AE /* Exceptions for "stock-register" folder in "stock-register" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 04AF6F042EBD3725006AD3AE /* stock-register */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		04AF6F072EBD3725006AD3AE /* stock-register */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				04AF6F082EBD3725006AD3AE /* Exceptions for "stock-register" folder in "stock-register" target */,
+			);
 			path = "stock-register";
 			sourceTree = "<group>";
 		};
@@ -29,9 +42,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				04AA046C2F710D2E002DB500 /* GoogleSignInSwift in Frameworks */,
+				67F3B4272F71433700B35735 /* GoogleSignInSwift in Frameworks */,
 				04AA04672F707262002DB500 /* FirebaseAuth in Frameworks */,
-				04AA046A2F710D2E002DB500 /* GoogleSignIn in Frameworks */,
+				67F3B4252F71433700B35735 /* GoogleSignIn in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -75,8 +88,8 @@
 			name = "stock-register";
 			packageProductDependencies = (
 				04AA04662F707262002DB500 /* FirebaseAuth */,
-				04AA04692F710D2E002DB500 /* GoogleSignIn */,
-				04AA046B2F710D2E002DB500 /* GoogleSignInSwift */,
+				67F3B4242F71433700B35735 /* GoogleSignIn */,
+				67F3B4262F71433700B35735 /* GoogleSignInSwift */,
 			);
 			productName = "stock-register";
 			productReference = 04AF6F052EBD3725006AD3AE /* stock-register.app */;
@@ -108,7 +121,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				04AA04652F707262002DB500 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
-				04AA04682F710D2E002DB500 /* XCRemoteSwiftPackageReference "googleSignIn-iOS" */,
+				67F3B4232F71433700B35735 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 04AF6F062EBD3725006AD3AE /* Products */;
@@ -267,13 +280,10 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = M88XD3J83M;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "stock-register/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -298,13 +308,10 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = M88XD3J83M;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "stock-register/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -354,12 +361,12 @@
 				minimumVersion = 12.11.0;
 			};
 		};
-		04AA04682F710D2E002DB500 /* XCRemoteSwiftPackageReference "googleSignIn-iOS" */ = {
+		67F3B4232F71433700B35735 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/google/googleSignIn-iOS";
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 9.1.0;
+				minimumVersion = 8.0.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -370,14 +377,14 @@
 			package = 04AA04652F707262002DB500 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseAuth;
 		};
-		04AA04692F710D2E002DB500 /* GoogleSignIn */ = {
+		67F3B4242F71433700B35735 /* GoogleSignIn */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 04AA04682F710D2E002DB500 /* XCRemoteSwiftPackageReference "googleSignIn-iOS" */;
+			package = 67F3B4232F71433700B35735 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
 			productName = GoogleSignIn;
 		};
-		04AA046B2F710D2E002DB500 /* GoogleSignInSwift */ = {
+		67F3B4262F71433700B35735 /* GoogleSignInSwift */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 04AA04682F710D2E002DB500 /* XCRemoteSwiftPackageReference "googleSignIn-iOS" */;
+			package = 67F3B4232F71433700B35735 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
 			productName = GoogleSignInSwift;
 		};
 /* End XCSwiftPackageProductDependency section */
