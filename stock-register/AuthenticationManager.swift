@@ -3,6 +3,7 @@ import SwiftUI
 import Combine
 import GoogleSignIn
 import FirebaseCore
+import FirebaseAuth
 
 @MainActor
 class AuthenticationManager: ObservableObject {
@@ -13,6 +14,10 @@ class AuthenticationManager: ObservableObject {
     @Published var userProfileImageURL: URL?
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
+
+    var userId: String {
+        Auth.auth().currentUser?.uid ?? currentUser?.userID ?? ""
+    }
     
     static let shared = AuthenticationManager()
     
@@ -45,15 +50,23 @@ class AuthenticationManager: ObservableObject {
         do {
             let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: rootViewController)
             let user = result.user
-            
+
+            if let idToken = user.idToken?.tokenString {
+                let credential = GoogleAuthProvider.credential(
+                    withIDToken: idToken,
+                    accessToken: user.accessToken.tokenString
+                )
+                try? await Auth.auth().signIn(with: credential)
+            }
+
             self.currentUser = user
             self.isSignedIn = true
             self.userDisplayName = user.profile?.name ?? "User"
             self.userEmail = user.profile?.email ?? ""
             self.userProfileImageURL = user.profile?.imageURL(withDimension: 100)
-            
+
             isLoading = false
-            
+
         } catch {
             errorMessage = error.localizedDescription
             isLoading = false
@@ -62,7 +75,8 @@ class AuthenticationManager: ObservableObject {
     
     func signOut() {
         GIDSignIn.sharedInstance.signOut()
-        
+        try? Auth.auth().signOut()
+
         currentUser = nil
         isSignedIn = false
         userDisplayName = ""
@@ -79,6 +93,15 @@ class AuthenticationManager: ObservableObject {
             self.userDisplayName = user.profile?.name ?? "User"
             self.userEmail = user.profile?.email ?? ""
             self.userProfileImageURL = user.profile?.imageURL(withDimension: 100)
+
+            if Auth.auth().currentUser == nil, let idToken = user.idToken?.tokenString {
+                let credential = GoogleAuthProvider.credential(
+                    withIDToken: idToken,
+                    accessToken: user.accessToken.tokenString
+                )
+                try? await Auth.auth().signIn(with: credential)
+            }
+
         } catch {
             self.isSignedIn = false
         }

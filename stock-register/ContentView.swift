@@ -1,6 +1,7 @@
 import SwiftUI
 import PDFKit
 import FirebaseCore
+import FirebaseFirestore
 import GoogleSignIn
 
 class AppDelegate: NSObject, UIApplicationDelegate {
@@ -138,51 +139,147 @@ class InventoryViewModel: ObservableObject {
     @Published var transactions: [Transaction] = []
     @Published var businesses: [Business] = []
     @Published var currentBusinessId: UUID?
-    
+    @Published var isLoading: Bool = false
+
+    private let db = Firestore.firestore()
+    private var userId: String = ""
+    private var listeners: [ListenerRegistration] = []
+    private var initialLoadDone = false
+
     var currentBusiness: Business? {
         guard let id = currentBusinessId else { return businesses.first }
         return businesses.first(where: { $0.id == id })
     }
-    
+
     var currentBusinessItems: [InventoryItem] {
         guard let businessId = currentBusinessId else { return [] }
         return items.filter { $0.businessId == businessId }
     }
-    
+
     var currentBusinessTransactions: [Transaction] {
         guard let businessId = currentBusinessId else { return [] }
         return transactions.filter { $0.businessId == businessId }
     }
-    
-    init() {
-        loadData()
-        if businesses.isEmpty {
-            let defaultBusiness = Business(name: "JM & Sons", dateCreated: Date())
-            businesses.append(defaultBusiness)
-            currentBusinessId = defaultBusiness.id
-            saveData()
-        }
-        if items.isEmpty {
-            addSampleData()
-        }
+
+    init() {}
+
+    // Call this when a user signs in (with their Firebase UID) or signs out (pass "")
+    func configure(userId: String) {
+        listeners.forEach { $0.remove() }
+        listeners = []
+        items = []
+        transactions = []
+        businesses = []
+        currentBusinessId = nil
+        initialLoadDone = false
+
+        guard !userId.isEmpty else { return }
+        self.userId = userId
+        attachListeners()
     }
-    
+
+    private func userRef() -> DocumentReference {
+        db.collection("users").document(userId)
+    }
+
+    private func attachListeners() {
+        isLoading = true
+
+        let bizListener = userRef().collection("businesses")
+            .addSnapshotListener { [weak self] snap, _ in
+                guard let self = self, let snap = snap else { return }
+                let decoded: [Business] = snap.documents.compactMap {
+                    try? Self.decodeModel(Business.self, from: $0.data())
+                }
+                DispatchQueue.main.async {
+                    self.businesses = decoded
+                    if !self.initialLoadDone {
+                        self.initialLoadDone = true
+                        if decoded.isEmpty {
+                            let biz = Business(name: "My Business", dateCreated: Date())
+                            self.addBusiness(biz)
+                            self.addSampleData(for: biz.id)
+                        } else if self.currentBusinessId == nil ||
+                                  !decoded.contains(where: { $0.id == self.currentBusinessId }) {
+                            self.currentBusinessId = decoded.first?.id
+                        }
+                    }
+                    self.isLoading = false
+                }
+            }
+        listeners.append(bizListener)
+
+        let itemsListener = userRef().collection("items")
+            .addSnapshotListener { [weak self] snap, _ in
+                guard let self = self, let snap = snap else { return }
+                let decoded: [InventoryItem] = snap.documents.compactMap {
+                    try? Self.decodeModel(InventoryItem.self, from: $0.data())
+                }
+                DispatchQueue.main.async { self.items = decoded }
+            }
+        listeners.append(itemsListener)
+
+        let txnsListener = userRef().collection("transactions")
+            .order(by: "date", descending: true)
+            .addSnapshotListener { [weak self] snap, _ in
+                guard let self = self, let snap = snap else { return }
+                let decoded: [Transaction] = snap.documents.compactMap {
+                    try? Self.decodeModel(Transaction.self, from: $0.data())
+                }
+                DispatchQueue.main.async { self.transactions = decoded }
+            }
+        listeners.append(txnsListener)
+
+        let settingsListener = userRef().collection("settings").document("current")
+            .addSnapshotListener { [weak self] snap, _ in
+                guard let self = self, let snap = snap, snap.exists else { return }
+                if let idStr = snap.data()?["currentBusinessId"] as? String,
+                   let id = UUID(uuidString: idStr) {
+                    DispatchQueue.main.async { self.currentBusinessId = id }
+                }
+            }
+        listeners.append(settingsListener)
+    }
+
+    private static func decodeModel<T: Decodable>(_ type: T.Type, from dict: [String: Any]) throws -> T {
+        let data = try JSONSerialization.data(withJSONObject: dict)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        return try decoder.decode(type, from: data)
+    }
+
+    private func encodeModel<T: Encodable>(_ value: T) -> [String: Any]? {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .secondsSince1970
+        guard let data = try? encoder.encode(value),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return dict
+    }
+
+    private func saveCurrentBusiness() {
+        guard !userId.isEmpty, let id = currentBusinessId else { return }
+        userRef().collection("settings").document("current")
+            .setData(["currentBusinessId": id.uuidString], merge: true)
+    }
+
     var totalPurchase: Double {
         currentBusinessTransactions
             .filter { $0.type == .purchase || $0.type == .stockIn }
             .reduce(0) { $0 + $1.totalAmount }
     }
-    
+
     var totalSales: Double {
         currentBusinessTransactions
             .filter { $0.type == .sale || $0.type == .stockOut }
             .reduce(0) { $0 + $1.totalAmount }
     }
-    
+
     var totalProfit: Double {
         totalSales - totalPurchase
     }
-    
+
     func sortedItems(_ items: [InventoryItem], by sortOption: SortOption) -> [InventoryItem] {
         switch sortOption {
         case .nameAsc:
@@ -199,7 +296,7 @@ class InventoryViewModel: ObservableObject {
             return items.sorted { $0.dateAdded < $1.dateAdded }
         }
     }
-    
+
     func generatePDF(title: String, content: String) -> URL? {
         let pdfMetaData = [
             kCGPDFContextCreator: "Inventory Manager",
@@ -208,81 +305,123 @@ class InventoryViewModel: ObservableObject {
         ]
         let format = UIGraphicsPDFRendererFormat()
         format.documentInfo = pdfMetaData as [String: Any]
-        
+
         let pageWidth = 8.5 * 72.0
         let pageHeight = 11 * 72.0
         let pageRect = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
-        
+
         let renderer = UIGraphicsPDFRenderer(bounds: pageRect, format: format)
-        
+
         let data = renderer.pdfData { context in
             context.beginPage()
-            
+
             let titleFont = UIFont.boldSystemFont(ofSize: 24)
             let bodyFont = UIFont.systemFont(ofSize: 12)
-            
+
             let titleAttributes: [NSAttributedString.Key: Any] = [.font: titleFont]
             let bodyAttributes: [NSAttributedString.Key: Any] = [.font: bodyFont]
-            
+
             title.draw(at: CGPoint(x: 50, y: 50), withAttributes: titleAttributes)
-            
+
             let textRect = CGRect(x: 50, y: 100, width: pageWidth - 100, height: pageHeight - 150)
             content.draw(in: textRect, withAttributes: bodyAttributes)
         }
-        
+
         let fileName = "\(title.replacingOccurrences(of: " ", with: "_")).pdf"
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
         try? data.write(to: url)
         return url
     }
-    
+
     func addBusiness(_ business: Business) {
         businesses.append(business)
-        saveData()
+        if currentBusinessId == nil {
+            currentBusinessId = business.id
+            saveCurrentBusiness()
+        }
+        guard !userId.isEmpty else { return }
+        if let data = encodeModel(business) {
+            userRef().collection("businesses").document(business.id.uuidString).setData(data)
+        }
     }
-    
+
     func deleteBusiness(_ business: Business) {
         businesses.removeAll { $0.id == business.id }
         items.removeAll { $0.businessId == business.id }
         transactions.removeAll { $0.businessId == business.id }
         if currentBusinessId == business.id {
             currentBusinessId = businesses.first?.id
+            saveCurrentBusiness()
         }
-        saveData()
+        guard !userId.isEmpty else { return }
+        let batch = db.batch()
+        batch.deleteDocument(userRef().collection("businesses").document(business.id.uuidString))
+        Task {
+            if let snap = try? await userRef().collection("items")
+                .whereField("businessId", isEqualTo: business.id.uuidString)
+                .getDocuments() {
+                snap.documents.forEach { batch.deleteDocument($0.reference) }
+            }
+            if let snap = try? await userRef().collection("transactions")
+                .whereField("businessId", isEqualTo: business.id.uuidString)
+                .getDocuments() {
+                snap.documents.forEach { batch.deleteDocument($0.reference) }
+            }
+            try? await batch.commit()
+        }
     }
-    
+
     func switchBusiness(to businessId: UUID) {
         currentBusinessId = businessId
-        saveData()
+        saveCurrentBusiness()
     }
-    
+
     func addItem(_ item: InventoryItem) {
         items.append(item)
-        saveData()
+        guard !userId.isEmpty else { return }
+        if let data = encodeModel(item) {
+            userRef().collection("items").document(item.id.uuidString).setData(data)
+        }
     }
-    
+
     func updateItem(_ item: InventoryItem) {
         if let index = items.firstIndex(where: { $0.id == item.id }) {
             items[index] = item
-            saveData()
+        }
+        guard !userId.isEmpty else { return }
+        if let data = encodeModel(item) {
+            userRef().collection("items").document(item.id.uuidString).setData(data)
         }
     }
-    
+
     func deleteItem(_ item: InventoryItem) {
         items.removeAll { $0.id == item.id }
         transactions.removeAll { $0.itemId == item.id }
-        saveData()
+        guard !userId.isEmpty else { return }
+        let batch = db.batch()
+        batch.deleteDocument(userRef().collection("items").document(item.id.uuidString))
+        Task {
+            if let snap = try? await userRef().collection("transactions")
+                .whereField("itemId", isEqualTo: item.id.uuidString)
+                .getDocuments() {
+                snap.documents.forEach { batch.deleteDocument($0.reference) }
+            }
+            try? await batch.commit()
+        }
     }
-    
+
     func addTransaction(_ transaction: Transaction) {
         transactions.insert(transaction, at: 0)
-        saveData()
+        guard !userId.isEmpty else { return }
+        if let data = encodeModel(transaction) {
+            userRef().collection("transactions").document(transaction.id.uuidString).setData(data)
+        }
     }
-    
+
     func stockIn(for item: InventoryItem, quantity: Double, pricePerUnit: Double?) {
         if let index = items.firstIndex(where: { $0.id == item.id }) {
             items[index].currentStock += quantity
-            
+
             let totalAmount = (pricePerUnit ?? 0) * quantity
             let transaction = Transaction(
                 businessId: item.businessId,
@@ -296,18 +435,18 @@ class InventoryViewModel: ObservableObject {
                 date: Date()
             )
             addTransaction(transaction)
-            saveData()
+            guard !userId.isEmpty else { return }
+            if let data = encodeModel(items[index]) {
+                userRef().collection("items").document(item.id.uuidString).setData(data)
+            }
         }
     }
-    
+
     func stockOut(for item: InventoryItem, quantity: Double, pricePerUnit: Double?) -> Bool {
         if let index = items.firstIndex(where: { $0.id == item.id }) {
-            if items[index].currentStock - quantity < 0 {
-                return false
-            }
-            
+            if items[index].currentStock - quantity < 0 { return false }
             items[index].currentStock -= quantity
-            
+
             let totalAmount = (pricePerUnit ?? item.sellingPrice ?? 0) * quantity
             let transaction = Transaction(
                 businessId: item.businessId,
@@ -321,62 +460,33 @@ class InventoryViewModel: ObservableObject {
                 date: Date()
             )
             addTransaction(transaction)
-            saveData()
+            guard !userId.isEmpty else { return true }
+            if let data = encodeModel(items[index]) {
+                userRef().collection("items").document(item.id.uuidString).setData(data)
+            }
             return true
         }
         return false
     }
-    
+
     func getStockIn(for item: InventoryItem) -> Double {
         currentBusinessTransactions
             .filter { $0.itemId == item.id && ($0.type == .stockIn || $0.type == .purchase) }
             .reduce(0) { $0 + $1.quantity }
     }
-    
+
     func getStockOut(for item: InventoryItem) -> Double {
         currentBusinessTransactions
             .filter { $0.itemId == item.id && ($0.type == .stockOut || $0.type == .sale) }
             .reduce(0) { $0 + $1.quantity }
     }
-    
+
     func saveData() {
-        if let itemsData = try? JSONEncoder().encode(items) {
-            UserDefaults.standard.set(itemsData, forKey: "inventoryItems")
-        }
-        if let transactionsData = try? JSONEncoder().encode(transactions) {
-            UserDefaults.standard.set(transactionsData, forKey: "transactions")
-        }
-        if let businessesData = try? JSONEncoder().encode(businesses) {
-            UserDefaults.standard.set(businessesData, forKey: "businesses")
-        }
-        if let currentBusinessId = currentBusinessId {
-            UserDefaults.standard.set(currentBusinessId.uuidString, forKey: "currentBusinessId")
-        }
+        // Data is now persisted to Firestore automatically
     }
-    
-    private func loadData() {
-        if let itemsData = UserDefaults.standard.data(forKey: "inventoryItems"),
-           let decoded = try? JSONDecoder().decode([InventoryItem].self, from: itemsData) {
-            items = decoded
-        }
-        if let transactionsData = UserDefaults.standard.data(forKey: "transactions"),
-           let decoded = try? JSONDecoder().decode([Transaction].self, from: transactionsData) {
-            transactions = decoded
-        }
-        if let businessesData = UserDefaults.standard.data(forKey: "businesses"),
-           let decoded = try? JSONDecoder().decode([Business].self, from: businessesData) {
-            businesses = decoded
-        }
-        if let businessIdString = UserDefaults.standard.string(forKey: "currentBusinessId"),
-           let businessId = UUID(uuidString: businessIdString) {
-            currentBusinessId = businessId
-        }
-    }
-    
-    private func addSampleData() {
-        guard let businessId = currentBusinessId else { return }
-        
-        let laptop = InventoryItem(
+
+    private func addSampleData(for businessId: UUID) {
+        let biri = InventoryItem(
             businessId: businessId,
             name: "36 no biri, D1",
             purchasePrice: 450,
@@ -388,8 +498,7 @@ class InventoryViewModel: ObservableObject {
             currentStock: 2.0,
             dateAdded: Date()
         )
-        
-        let chair = InventoryItem(
+        let sabun = InventoryItem(
             businessId: businessId,
             name: "5 Bhai Sabun",
             purchasePrice: 80,
@@ -401,9 +510,8 @@ class InventoryViewModel: ObservableObject {
             currentStock: 0,
             dateAdded: Date()
         )
-        
-        items = [laptop, chair]
-        saveData()
+        addItem(biri)
+        addItem(sabun)
     }
 }
 
@@ -412,8 +520,9 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var viewModel = InventoryViewModel()
+    @EnvironmentObject var authManager: AuthenticationManager
     @State private var selectedTab = 1
-    
+
     var body: some View {
         TabView(selection: $selectedTab) {
             HomeView()
@@ -421,30 +530,36 @@ struct ContentView: View {
                     Label("Home", systemImage: "house.fill")
                 }
                 .tag(0)
-            
+
             DashboardView(viewModel: viewModel, selectedTab: $selectedTab)
                 .tabItem {
                     Label("Stock", systemImage: "arrow.left.arrow.right")
                 }
                 .tag(1)
-            
+
             InventoryListView(viewModel: viewModel)
                 .tabItem {
                     Label("Items", systemImage: "square.grid.2x2.fill")
                 }
                 .tag(2)
-            
+
             TransactionsView(viewModel: viewModel)
                 .tabItem {
                     Label("Transactions", systemImage: "list.bullet.rectangle")
                 }
                 .tag(3)
-            
+
             SettingsView(viewModel: viewModel)
                 .tabItem {
                     Label("Settings", systemImage: "gearshape.fill")
                 }
                 .tag(4)
+        }
+        .onAppear {
+            viewModel.configure(userId: authManager.isSignedIn ? authManager.userId : "")
+        }
+        .onChange(of: authManager.isSignedIn) { isSignedIn in
+            viewModel.configure(userId: isSignedIn ? authManager.userId : "")
         }
     }
 }
