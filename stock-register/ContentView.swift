@@ -45,7 +45,7 @@ struct InventoryApp: App {
 // Models.swift
 import Foundation
 
-struct Business: Identifiable, Codable {
+struct UserCategory: Identifiable, Codable {
     var id = UUID()
     var name: String
     var dateCreated: Date
@@ -53,13 +53,13 @@ struct Business: Identifiable, Codable {
 
 struct InventoryItem: Identifiable, Codable {
     var id = UUID()
-    var businessId: UUID
+    var categoryId: UUID
     var name: String
     var purchasePrice: Double?
     var mrp: Double?
     var sellingPrice: Double?
     var priceUnit: String
-    var category: String
+    var category: String = ""
     var openingStock: Double
     var currentStock: Double
     var dateAdded: Date
@@ -67,16 +67,15 @@ struct InventoryItem: Identifiable, Codable {
 
 struct Transaction: Identifiable, Codable {
     var id = UUID()
-    var businessId: UUID
+    var categoryId: UUID
     var itemId: UUID
     var itemName: String
-    var itemCategory: String
     var type: TransactionType
     var quantity: Double
     var pricePerUnit: Double?
     var totalAmount: Double
     var date: Date
-    
+
     enum TransactionType: String, Codable {
         case stockIn = "Stock In"
         case stockOut = "Stock Out"
@@ -104,22 +103,6 @@ struct PriceUnit {
     ]
 }
 
-struct Category {
-    static let categories = [
-        "All Items",
-        "Electronics",
-        "Furniture",
-        "Clothing",
-        "Food",
-        "Office Supplies",
-        "Hardware",
-        "Cosmetics",
-        "Medicine",
-        "Stationery",
-        "Other"
-    ]
-}
-
 enum SortOption: String, CaseIterable {
     case nameAsc = "Name (A-Z)"
     case nameDesc = "Name (Z-A)"
@@ -137,8 +120,9 @@ import UIKit
 class InventoryViewModel: ObservableObject {
     @Published var items: [InventoryItem] = []
     @Published var transactions: [Transaction] = []
-    @Published var businesses: [Business] = []
-    @Published var currentBusinessId: UUID?
+    @Published var categories: [UserCategory] = []
+    @Published var currentCategoryId: UUID?
+    @Published var businessName: String = ""
     @Published var isLoading: Bool = false
 
     private let db = Firestore.firestore()
@@ -146,31 +130,31 @@ class InventoryViewModel: ObservableObject {
     private var listeners: [ListenerRegistration] = []
     private var initialLoadDone = false
 
-    var currentBusiness: Business? {
-        guard let id = currentBusinessId else { return businesses.first }
-        return businesses.first(where: { $0.id == id })
+    var currentCategory: UserCategory? {
+        guard let id = currentCategoryId else { return categories.first }
+        return categories.first(where: { $0.id == id })
     }
 
-    var currentBusinessItems: [InventoryItem] {
-        guard let businessId = currentBusinessId else { return [] }
-        return items.filter { $0.businessId == businessId }
+    var currentCategoryItems: [InventoryItem] {
+        guard let categoryId = currentCategoryId else { return [] }
+        return items.filter { $0.categoryId == categoryId }
     }
 
-    var currentBusinessTransactions: [Transaction] {
-        guard let businessId = currentBusinessId else { return [] }
-        return transactions.filter { $0.businessId == businessId }
+    var currentCategoryTransactions: [Transaction] {
+        guard let categoryId = currentCategoryId else { return [] }
+        return transactions.filter { $0.categoryId == categoryId }
     }
 
     init() {}
 
-    // Call this when a user signs in (with their Firebase UID) or signs out (pass "")
     func configure(userId: String) {
         listeners.forEach { $0.remove() }
         listeners = []
         items = []
         transactions = []
-        businesses = []
-        currentBusinessId = nil
+        categories = []
+        currentCategoryId = nil
+        businessName = ""
         initialLoadDone = false
 
         guard !userId.isEmpty else { return }
@@ -185,29 +169,29 @@ class InventoryViewModel: ObservableObject {
     private func attachListeners() {
         isLoading = true
 
-        let bizListener = userRef().collection("businesses")
+        let catListener = userRef().collection("businesses")
             .addSnapshotListener { [weak self] snap, _ in
                 guard let self = self, let snap = snap else { return }
-                let decoded: [Business] = snap.documents.compactMap {
-                    try? Self.decodeModel(Business.self, from: $0.data())
+                let decoded: [UserCategory] = snap.documents.compactMap {
+                    try? Self.decodeModel(UserCategory.self, from: $0.data())
                 }
                 DispatchQueue.main.async {
-                    self.businesses = decoded
+                    self.categories = decoded
                     if !self.initialLoadDone {
                         self.initialLoadDone = true
                         if decoded.isEmpty {
-                            let biz = Business(name: "My Business", dateCreated: Date())
-                            self.addBusiness(biz)
-                            self.addSampleData(for: biz.id)
-                        } else if self.currentBusinessId == nil ||
-                                  !decoded.contains(where: { $0.id == self.currentBusinessId }) {
-                            self.currentBusinessId = decoded.first?.id
+                            let cat = UserCategory(name: "General", dateCreated: Date())
+                            self.addCategory(cat)
+                            self.addSampleData(for: cat.id)
+                        } else if self.currentCategoryId == nil ||
+                                  !decoded.contains(where: { $0.id == self.currentCategoryId }) {
+                            self.currentCategoryId = decoded.first?.id
                         }
                     }
                     self.isLoading = false
                 }
             }
-        listeners.append(bizListener)
+        listeners.append(catListener)
 
         let itemsListener = userRef().collection("items")
             .addSnapshotListener { [weak self] snap, _ in
@@ -233,9 +217,13 @@ class InventoryViewModel: ObservableObject {
         let settingsListener = userRef().collection("settings").document("current")
             .addSnapshotListener { [weak self] snap, _ in
                 guard let self = self, let snap = snap, snap.exists else { return }
-                if let idStr = snap.data()?["currentBusinessId"] as? String,
+                let data = snap.data() ?? [:]
+                if let idStr = data["currentCategoryId"] as? String,
                    let id = UUID(uuidString: idStr) {
-                    DispatchQueue.main.async { self.currentBusinessId = id }
+                    DispatchQueue.main.async { self.currentCategoryId = id }
+                }
+                if let name = data["businessName"] as? String {
+                    DispatchQueue.main.async { self.businessName = name }
                 }
             }
         listeners.append(settingsListener)
@@ -258,20 +246,26 @@ class InventoryViewModel: ObservableObject {
         return dict
     }
 
-    private func saveCurrentBusiness() {
-        guard !userId.isEmpty, let id = currentBusinessId else { return }
-        userRef().collection("settings").document("current")
-            .setData(["currentBusinessId": id.uuidString], merge: true)
+    private func saveSettings() {
+        guard !userId.isEmpty else { return }
+        var data: [String: Any] = ["businessName": businessName]
+        if let id = currentCategoryId { data["currentCategoryId"] = id.uuidString }
+        userRef().collection("settings").document("current").setData(data, merge: true)
+    }
+
+    func updateBusinessName(_ name: String) {
+        businessName = name
+        saveSettings()
     }
 
     var totalPurchase: Double {
-        currentBusinessTransactions
+        currentCategoryTransactions
             .filter { $0.type == .purchase || $0.type == .stockIn }
             .reduce(0) { $0 + $1.totalAmount }
     }
 
     var totalSales: Double {
-        currentBusinessTransactions
+        currentCategoryTransactions
             .filter { $0.type == .sale || $0.type == .stockOut }
             .reduce(0) { $0 + $1.totalAmount }
     }
@@ -282,18 +276,12 @@ class InventoryViewModel: ObservableObject {
 
     func sortedItems(_ items: [InventoryItem], by sortOption: SortOption) -> [InventoryItem] {
         switch sortOption {
-        case .nameAsc:
-            return items.sorted { $0.name < $1.name }
-        case .nameDesc:
-            return items.sorted { $0.name > $1.name }
-        case .stockLow:
-            return items.sorted { $0.currentStock < $1.currentStock }
-        case .stockHigh:
-            return items.sorted { $0.currentStock > $1.currentStock }
-        case .dateNew:
-            return items.sorted { $0.dateAdded > $1.dateAdded }
-        case .dateOld:
-            return items.sorted { $0.dateAdded < $1.dateAdded }
+        case .nameAsc: return items.sorted { $0.name < $1.name }
+        case .nameDesc: return items.sorted { $0.name > $1.name }
+        case .stockLow: return items.sorted { $0.currentStock < $1.currentStock }
+        case .stockHigh: return items.sorted { $0.currentStock > $1.currentStock }
+        case .dateNew: return items.sorted { $0.dateAdded > $1.dateAdded }
+        case .dateOld: return items.sorted { $0.dateAdded < $1.dateAdded }
         }
     }
 
@@ -314,15 +302,11 @@ class InventoryViewModel: ObservableObject {
 
         let data = renderer.pdfData { context in
             context.beginPage()
-
             let titleFont = UIFont.boldSystemFont(ofSize: 24)
             let bodyFont = UIFont.systemFont(ofSize: 12)
-
             let titleAttributes: [NSAttributedString.Key: Any] = [.font: titleFont]
             let bodyAttributes: [NSAttributedString.Key: Any] = [.font: bodyFont]
-
             title.draw(at: CGPoint(x: 50, y: 50), withAttributes: titleAttributes)
-
             let textRect = CGRect(x: 50, y: 100, width: pageWidth - 100, height: pageHeight - 150)
             content.draw(in: textRect, withAttributes: bodyAttributes)
         }
@@ -333,37 +317,37 @@ class InventoryViewModel: ObservableObject {
         return url
     }
 
-    func addBusiness(_ business: Business) {
-        businesses.append(business)
-        if currentBusinessId == nil {
-            currentBusinessId = business.id
-            saveCurrentBusiness()
+    func addCategory(_ category: UserCategory) {
+        categories.append(category)
+        if currentCategoryId == nil {
+            currentCategoryId = category.id
+            saveSettings()
         }
         guard !userId.isEmpty else { return }
-        if let data = encodeModel(business) {
-            userRef().collection("businesses").document(business.id.uuidString).setData(data)
+        if let data = encodeModel(category) {
+            userRef().collection("businesses").document(category.id.uuidString).setData(data)
         }
     }
 
-    func deleteBusiness(_ business: Business) {
-        businesses.removeAll { $0.id == business.id }
-        items.removeAll { $0.businessId == business.id }
-        transactions.removeAll { $0.businessId == business.id }
-        if currentBusinessId == business.id {
-            currentBusinessId = businesses.first?.id
-            saveCurrentBusiness()
+    func deleteCategory(_ category: UserCategory) {
+        categories.removeAll { $0.id == category.id }
+        items.removeAll { $0.categoryId == category.id }
+        transactions.removeAll { $0.categoryId == category.id }
+        if currentCategoryId == category.id {
+            currentCategoryId = categories.first?.id
+            saveSettings()
         }
         guard !userId.isEmpty else { return }
         let batch = db.batch()
-        batch.deleteDocument(userRef().collection("businesses").document(business.id.uuidString))
+        batch.deleteDocument(userRef().collection("businesses").document(category.id.uuidString))
         Task {
             if let snap = try? await userRef().collection("items")
-                .whereField("businessId", isEqualTo: business.id.uuidString)
+                .whereField("categoryId", isEqualTo: category.id.uuidString)
                 .getDocuments() {
                 snap.documents.forEach { batch.deleteDocument($0.reference) }
             }
             if let snap = try? await userRef().collection("transactions")
-                .whereField("businessId", isEqualTo: business.id.uuidString)
+                .whereField("categoryId", isEqualTo: category.id.uuidString)
                 .getDocuments() {
                 snap.documents.forEach { batch.deleteDocument($0.reference) }
             }
@@ -371,9 +355,9 @@ class InventoryViewModel: ObservableObject {
         }
     }
 
-    func switchBusiness(to businessId: UUID) {
-        currentBusinessId = businessId
-        saveCurrentBusiness()
+    func switchCategory(to categoryId: UUID) {
+        currentCategoryId = categoryId
+        saveSettings()
     }
 
     func addItem(_ item: InventoryItem) {
@@ -421,13 +405,11 @@ class InventoryViewModel: ObservableObject {
     func stockIn(for item: InventoryItem, quantity: Double, pricePerUnit: Double?) {
         if let index = items.firstIndex(where: { $0.id == item.id }) {
             items[index].currentStock += quantity
-
             let totalAmount = (pricePerUnit ?? 0) * quantity
             let transaction = Transaction(
-                businessId: item.businessId,
+                categoryId: item.categoryId,
                 itemId: item.id,
                 itemName: item.name,
-                itemCategory: item.category,
                 type: .stockIn,
                 quantity: quantity,
                 pricePerUnit: pricePerUnit,
@@ -446,13 +428,11 @@ class InventoryViewModel: ObservableObject {
         if let index = items.firstIndex(where: { $0.id == item.id }) {
             if items[index].currentStock - quantity < 0 { return false }
             items[index].currentStock -= quantity
-
             let totalAmount = (pricePerUnit ?? item.sellingPrice ?? 0) * quantity
             let transaction = Transaction(
-                businessId: item.businessId,
+                categoryId: item.categoryId,
                 itemId: item.id,
                 itemName: item.name,
-                itemCategory: item.category,
                 type: .stockOut,
                 quantity: quantity,
                 pricePerUnit: pricePerUnit,
@@ -470,42 +450,38 @@ class InventoryViewModel: ObservableObject {
     }
 
     func getStockIn(for item: InventoryItem) -> Double {
-        currentBusinessTransactions
+        currentCategoryTransactions
             .filter { $0.itemId == item.id && ($0.type == .stockIn || $0.type == .purchase) }
             .reduce(0) { $0 + $1.quantity }
     }
 
     func getStockOut(for item: InventoryItem) -> Double {
-        currentBusinessTransactions
+        currentCategoryTransactions
             .filter { $0.itemId == item.id && ($0.type == .stockOut || $0.type == .sale) }
             .reduce(0) { $0 + $1.quantity }
     }
 
-    func saveData() {
-        // Data is now persisted to Firestore automatically
-    }
+    func saveData() {}
 
-    private func addSampleData(for businessId: UUID) {
+    private func addSampleData(for categoryId: UUID) {
         let biri = InventoryItem(
-            businessId: businessId,
+            categoryId: categoryId,
             name: "36 no biri, D1",
             purchasePrice: 450,
             mrp: 500,
             sellingPrice: 480,
             priceUnit: "cartoon",
-            category: "Electronics",
             openingStock: 2.0,
             currentStock: 2.0,
             dateAdded: Date()
         )
         let sabun = InventoryItem(
-            businessId: businessId,
+            categoryId: categoryId,
             name: "5 Bhai Sabun",
             purchasePrice: 80,
             mrp: 100,
             sellingPrice: 95,
             priceUnit: "Bundle",
-            category: "Furniture",
             openingStock: 0,
             currentStock: 0,
             dateAdded: Date()
@@ -522,6 +498,13 @@ struct ContentView: View {
     @StateObject private var viewModel = InventoryViewModel()
     @EnvironmentObject var authManager: AuthenticationManager
     @State private var selectedTab = 1
+
+    init() {
+        let appearance = UITabBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        UITabBar.appearance().standardAppearance = appearance
+        UITabBar.appearance().scrollEdgeAppearance = appearance
+    }
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -555,6 +538,7 @@ struct ContentView: View {
                 }
                 .tag(4)
         }
+        .tint(.indigo)
         .onAppear {
             viewModel.configure(userId: authManager.isSignedIn ? authManager.userId : "")
         }
@@ -678,7 +662,7 @@ struct FeatureCard: View {
             }
         }
         .padding()
-        .background(Color.gray.opacity(0.05))
+        .background(Color(.secondarySystemBackground))
         .cornerRadius(12)
         .padding(.horizontal)
     }
@@ -708,282 +692,272 @@ struct DashboardView: View {
     @Binding var selectedTab: Int
     @State private var selectedDate = Date()
     @State private var selectedPeriod = "Daily"
-    @State private var showingBusinessPicker = false
-    @State private var selectedCategory = "All Items"
+    @State private var selectedCategoryId: UUID? = nil
     @State private var searchText = ""
     @State private var sortOption: SortOption = .nameAsc
-    
+
     let periods = ["Daily", "Weekly", "Monthly", "Yearly"]
-    
-    var filteredItems: [InventoryItem] {
-        var items = viewModel.currentBusinessItems
-        
-        if selectedCategory != "All Items" {
-            items = items.filter { $0.category == selectedCategory }
+
+    var selectedItems: [InventoryItem] {
+        var items: [InventoryItem]
+        if let id = selectedCategoryId {
+            items = viewModel.items.filter { $0.categoryId == id }
+        } else {
+            items = viewModel.items
         }
-        
         if !searchText.isEmpty {
             items = items.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
         }
-        
         return viewModel.sortedItems(items, by: sortOption)
     }
-    
+
+    var selectedTransactions: [Transaction] {
+        if let id = selectedCategoryId {
+            return viewModel.transactions.filter { $0.categoryId == id }
+        }
+        return viewModel.transactions
+    }
+
+    var totalPurchaseFiltered: Double {
+        selectedTransactions
+            .filter { $0.type == .purchase || $0.type == .stockIn }
+            .reduce(0) { $0 + $1.totalAmount }
+    }
+
+    var totalSalesFiltered: Double {
+        selectedTransactions
+            .filter { $0.type == .sale || $0.type == .stockOut }
+            .reduce(0) { $0 + $1.totalAmount }
+    }
+
     var body: some View {
         NavigationView {
-            ZStack {
+            ZStack(alignment: .bottomTrailing) {
+                Color(.secondarySystemBackground).ignoresSafeArea()
+
                 ScrollView {
-                    VStack(spacing: 16) {
-                        HStack {
-                            Button(action: { showingBusinessPicker = true }) {
+                    VStack(spacing: 0) {
+                        // Gradient header
+                        ZStack {
+                            LinearGradient(
+                                colors: [Color.indigo, Color.blue],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                            .frame(height: 120)
+                            .clipShape(
+                                UnevenRoundedRectangle(
+                                    topLeadingRadius: 0,
+                                    bottomLeadingRadius: 28,
+                                    bottomTrailingRadius: 28,
+                                    topTrailingRadius: 0
+                                )
+                            )
+
+                            VStack(alignment: .leading, spacing: 4) {
                                 HStack {
-                                    Text("Your Business")
-                                        .font(.headline)
-                                    Image(systemName: "chevron.down")
-                                }
-                                .foregroundColor(.white)
-                            }
-                            .sheet(isPresented: $showingBusinessPicker) {
-                                BusinessPickerView(viewModel: viewModel)
-                            }
-                            
-                            Spacer()
-                            
-                            Button(action: { selectedTab = 4 }) {
-                                Text("Help")
-                                    .foregroundColor(.white)
-                            }
-                        }
-                        .padding()
-                        .background(Color.blue)
-                        
-                        HStack {
-                            Text(viewModel.currentBusiness?.name ?? "No Business")
-                                .font(.headline)
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 20)
-                                .padding(.vertical, 10)
-                                .background(Color.blue)
-                                .cornerRadius(20)
-                            
-                            Spacer()
-                        }
-                        .padding(.horizontal)
-                        
-                        HStack {
-                            Button(action: {
-                                selectedDate = Calendar.current.date(byAdding: .day, value: -1, to: selectedDate) ?? selectedDate
-                            }) {
-                                Image(systemName: "chevron.left")
-                                    .foregroundColor(.primary)
-                            }
-                            
-                            Spacer()
-                            
-                            Text(selectedDate, style: .date)
-                                .font(.headline)
-                            
-                            Spacer()
-                            
-                            Button(action: {
-                                selectedDate = Calendar.current.date(byAdding: .day, value: 1, to: selectedDate) ?? selectedDate
-                            }) {
-                                Image(systemName: "chevron.right")
-                                    .foregroundColor(.primary)
-                            }
-                        }
-                        .padding()
-                        .background(Color.white)
-                        .cornerRadius(12)
-                        .shadow(color: .gray.opacity(0.2), radius: 5)
-                        .padding(.horizontal)
-                        
-                        HStack {
-                            Spacer()
-                            Menu {
-                                ForEach(periods, id: \.self) { period in
-                                    Button(period) {
-                                        selectedPeriod = period
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(viewModel.businessName.isEmpty ? "My Business" : viewModel.businessName)
+                                            .font(.title2.bold())
+                                            .foregroundColor(.white)
+                                        Text("Stock Dashboard")
+                                            .font(.caption)
+                                            .foregroundColor(.white.opacity(0.75))
+                                    }
+                                    Spacer()
+                                    Button(action: { selectedTab = 4 }) {
+                                        Image(systemName: "questionmark.circle")
+                                            .font(.title3)
+                                            .foregroundColor(.white.opacity(0.85))
                                     }
                                 }
-                            } label: {
-                                HStack {
-                                    Text(selectedPeriod)
-                                    Image(systemName: "chevron.down")
-                                }
-                                .foregroundColor(.primary)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 8)
-                                .background(Color.white)
-                                .cornerRadius(8)
-                                .shadow(color: .gray.opacity(0.2), radius: 3)
+                                .padding(.horizontal)
+                                .padding(.top, 8)
                             }
                         }
-                        .padding(.horizontal)
-                        
+
                         VStack(spacing: 12) {
-                            HStack {
-                                Text("Total Profit")
-                                    .font(.headline)
-                                Spacer()
-                                Text("₹ (+)\(String(format: "%.2f", viewModel.totalProfit))")
-                                    .font(.headline)
-                                    .foregroundColor(.green)
-                            }
-                            
-                            Divider()
-                            
-                            HStack {
-                                Text("Total Purchase")
-                                Spacer()
-                                Text("₹ \(String(format: "%.2f", viewModel.totalPurchase))")
-                                    .foregroundColor(.red)
-                            }
-                            
-                            HStack {
-                                Text("Total Sales")
-                                Spacer()
-                                Text("₹ \(String(format: "%.2f", viewModel.totalSales))")
-                                    .foregroundColor(.green)
-                            }
-                            
-                            Divider()
-                            
-                            HStack {
-                                NavigationLink(destination: ReportsView(viewModel: viewModel)) {
-                                    Text("Reports >")
-                                        .foregroundColor(.blue)
-                                }
-                                
-                                Spacer()
-                                
-                                NavigationLink(destination: DetailedSummaryView(viewModel: viewModel)) {
-                                    Text("Detailed Summary >")
-                                        .foregroundColor(.blue)
-                                }
-                            }
-                        }
-                        .padding()
-                        .background(Color.mint.opacity(0.2))
-                        .cornerRadius(12)
-                        .padding(.horizontal)
-                        
-                        VStack(spacing: 0) {
-                            HStack {
-                                Menu {
-                                    ForEach(Category.categories, id: \.self) { category in
-                                        Button(category) {
-                                            selectedCategory = category
-                                        }
+                            // Category chips
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 10) {
+                                    CategoryFilterChip(
+                                        name: "All Items",
+                                        count: viewModel.items.count,
+                                        isSelected: selectedCategoryId == nil
+                                    ) { selectedCategoryId = nil }
+
+                                    ForEach(viewModel.categories) { cat in
+                                        CategoryFilterChip(
+                                            name: cat.name,
+                                            count: viewModel.items.filter { $0.categoryId == cat.id }.count,
+                                            isSelected: selectedCategoryId == cat.id
+                                        ) { selectedCategoryId = cat.id }
                                     }
+                                }
+                                .padding(.horizontal)
+                                .padding(.vertical, 8)
+                            }
+
+                            // Date & period row
+                            HStack {
+                                Button(action: {
+                                    selectedDate = Calendar.current.date(byAdding: .day, value: -1, to: selectedDate) ?? selectedDate
+                                }) {
+                                    Image(systemName: "chevron.left").foregroundColor(.primary)
+                                }
+                                Spacer()
+                                Text(selectedDate, style: .date).font(.headline)
+                                Spacer()
+                                Button(action: {
+                                    selectedDate = Calendar.current.date(byAdding: .day, value: 1, to: selectedDate) ?? selectedDate
+                                }) {
+                                    Image(systemName: "chevron.right").foregroundColor(.primary)
+                                }
+                                Menu {
+                                    ForEach(periods, id: \.self) { p in Button(p) { selectedPeriod = p } }
                                 } label: {
-                                    HStack {
-                                        Text(selectedCategory)
-                                            .font(.headline)
-                                        Image(systemName: "chevron.down")
+                                    HStack(spacing: 4) {
+                                        Text(selectedPeriod).font(.subheadline)
+                                        Image(systemName: "chevron.down").font(.caption)
                                     }
                                     .foregroundColor(.primary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Color(.tertiarySystemFill))
+                                    .cornerRadius(8)
                                 }
-                                
-                                Spacer()
-                                
-                                Menu {
-                                    ForEach(SortOption.allCases, id: \.self) { option in
-                                        Button(option.rawValue) {
-                                            sortOption = option
+                            }
+                            .padding(.horizontal)
+                            .padding(.vertical, 10)
+                            .background(Color(.systemBackground))
+                            .cornerRadius(14)
+                            .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.07), radius: 4, y: 2)
+                            .padding(.horizontal)
+
+                            // Summary card
+                            VStack(spacing: 10) {
+                                HStack {
+                                    Text("Total Profit")
+                                        .font(.headline)
+                                    Spacer()
+                                    Text("₹ \(String(format: "%.2f", totalSalesFiltered - totalPurchaseFiltered))")
+                                        .font(.headline)
+                                        .foregroundColor(totalSalesFiltered - totalPurchaseFiltered >= 0 ? .green : .red)
+                                }
+                                Divider()
+                                HStack {
+                                    Text("Total Purchase").foregroundColor(.secondary)
+                                    Spacer()
+                                    Text("₹ \(String(format: "%.2f", totalPurchaseFiltered))").foregroundColor(.red)
+                                }
+                                HStack {
+                                    Text("Total Sales").foregroundColor(.secondary)
+                                    Spacer()
+                                    Text("₹ \(String(format: "%.2f", totalSalesFiltered))").foregroundColor(.green)
+                                }
+                                Divider()
+                                HStack {
+                                    NavigationLink(destination: ReportsView(viewModel: viewModel)) {
+                                        Text("Reports →").foregroundColor(.indigo)
+                                    }
+                                    Spacer()
+                                    NavigationLink(destination: DetailedSummaryView(viewModel: viewModel)) {
+                                        Text("Detailed Summary →").foregroundColor(.indigo)
+                                    }
+                                }
+                            }
+                            .padding()
+                            .background(Color(.systemBackground))
+                            .cornerRadius(14)
+                            .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.07), radius: 4, y: 2)
+                            .padding(.horizontal)
+
+                            // Search + sort + items
+                            VStack(spacing: 0) {
+                                HStack {
+                                    HStack {
+                                        Image(systemName: "magnifyingglass").foregroundColor(.secondary)
+                                        TextField("Search items", text: $searchText)
+                                        if !searchText.isEmpty {
+                                            Button(action: { searchText = "" }) {
+                                                Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
+                                            }
                                         }
                                     }
-                                } label: {
-                                    Image(systemName: "arrow.up.arrow.down")
-                                        .font(.title3)
-                                }
-                                
-                                NavigationLink(destination: ReportsView(viewModel: viewModel)) {
-                                    Image(systemName: "doc.text.fill")
-                                        .font(.title3)
-                                }
-                            }
-                            .padding()
-                            
-                            HStack {
-                                Image(systemName: "magnifyingglass")
-                                    .foregroundColor(.gray)
-                                TextField("Search item name", text: $searchText)
-                                    .textFieldStyle(PlainTextFieldStyle())
-                                if !searchText.isEmpty {
-                                    Button(action: { searchText = "" }) {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .foregroundColor(.gray)
+                                    .padding(10)
+                                    .background(Color(.systemFill))
+                                    .cornerRadius(10)
+
+                                    Menu {
+                                        ForEach(SortOption.allCases, id: \.self) { o in
+                                            Button(o.rawValue) { sortOption = o }
+                                        }
+                                    } label: {
+                                        Image(systemName: "arrow.up.arrow.down")
+                                            .font(.title3)
+                                            .foregroundColor(.indigo)
+                                    }
+
+                                    NavigationLink(destination: ReportsView(viewModel: viewModel)) {
+                                        Image(systemName: "doc.text.fill")
+                                            .font(.title3)
+                                            .foregroundColor(.indigo)
                                     }
                                 }
+                                .padding(.horizontal)
+                                .padding(.top, 12)
+                                .padding(.bottom, 8)
+
+                                ForEach(selectedItems) { item in
+                                    ItemStockCard(item: item, viewModel: viewModel)
+                                }
                             }
-                            .padding()
-                            .background(Color.gray.opacity(0.1))
-                            .cornerRadius(8)
+                            .background(Color(.systemBackground))
+                            .cornerRadius(14)
+                            .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.07), radius: 4, y: 2)
                             .padding(.horizontal)
-                            
-                            ForEach(filteredItems) { item in
-                                ItemStockCard(item: item, viewModel: viewModel)
-                            }
                         }
-                        .background(Color.white)
-                        
-                        Spacer(minLength: 100)
+                        .padding(.top, 12)
+                        .padding(.bottom, 100)
                     }
                 }
-                .background(Color.gray.opacity(0.05))
-                
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        NavigationLink(destination: AddItemView(viewModel: viewModel)) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 20))
-                                .foregroundColor(.white)
-                                .padding(16)
-                                .background(Color.blue)
-                                .clipShape(Circle())
-                                .shadow(radius: 4)
-                        }
-                        .padding()
-                    }
+
+                // FAB
+                NavigationLink(destination: AddItemView(viewModel: viewModel)) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(18)
+                        .background(
+                            LinearGradient(colors: [.indigo, .blue], startPoint: .topLeading, endPoint: .bottomTrailing)
+                        )
+                        .clipShape(Circle())
+                        .shadow(color: .indigo.opacity(0.4), radius: 8, y: 4)
                 }
+                .padding()
             }
             .navigationBarHidden(true)
         }
     }
 }
 
-struct BusinessPickerView: View {
-    @ObservedObject var viewModel: InventoryViewModel
-    @Environment(\.dismiss) var dismiss
-    
+struct CategoryFilterChip: View {
+    let name: String
+    let count: Int
+    let isSelected: Bool
+    let action: () -> Void
+
     var body: some View {
-        NavigationView {
-            List {
-                ForEach(viewModel.businesses) { business in
-                    Button(action: {
-                        viewModel.switchBusiness(to: business.id)
-                        dismiss()
-                    }) {
-                        HStack {
-                            Text(business.name)
-                            Spacer()
-                            if business.id == viewModel.currentBusinessId {
-                                Image(systemName: "checkmark")
-                                    .foregroundColor(.blue)
-                            }
-                        }
-                    }
-                }
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text(name).font(.subheadline.weight(isSelected ? .semibold : .regular))
+                Text("(\(count))").font(.caption).opacity(0.8)
             }
-            .navigationTitle("Switch Business")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
-                }
-            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(isSelected ? Color.indigo : Color(.tertiarySystemFill))
+            .foregroundColor(isSelected ? .white : .primary)
+            .cornerRadius(20)
         }
     }
 }
@@ -1073,9 +1047,9 @@ struct ItemStockCard: View {
             }
         }
         .padding()
-        .background(Color.white)
+        .background(Color(.systemBackground))
         .cornerRadius(8)
-        .shadow(color: .gray.opacity(0.2), radius: 3)
+        .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.08), radius: 3)
         .padding(.horizontal)
         .padding(.vertical, 4)
         .sheet(isPresented: $showingStockIn) {
@@ -1099,9 +1073,9 @@ struct TransactionsView: View {
     
     var filteredTransactions: [Transaction] {
         if searchText.isEmpty {
-            return viewModel.currentBusinessTransactions
+            return viewModel.currentCategoryTransactions
         }
-        return viewModel.currentBusinessTransactions.filter {
+        return viewModel.currentCategoryTransactions.filter {
             $0.itemName.localizedCaseInsensitiveContains(searchText)
         }
     }
@@ -1123,18 +1097,9 @@ struct TransactionsView: View {
                                     Text(transaction.itemName)
                                         .font(.headline)
                                         .foregroundColor(.primary)
-                                    HStack {
-                                        Text(transaction.type.rawValue)
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                        if !transaction.itemCategory.isEmpty {
-                                            Text("•")
-                                                .foregroundColor(.secondary)
-                                            Text(transaction.itemCategory)
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                        }
-                                    }
+                                    Text(transaction.type.rawValue)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
                                 }
                                 
                                 Spacer()
@@ -1187,139 +1152,173 @@ struct TransactionsView: View {
 
 struct ReportsView: View {
     @ObservedObject var viewModel: InventoryViewModel
-    
+
+    let reports: [(title: String, icon: String, type: String)] = [
+        ("Daily Sales", "chart.line.uptrend.xyaxis", "Daily Sales"),
+        ("Monthly Sales", "chart.bar", "Monthly Sales"),
+        ("Yearly Sales", "chart.pie", "Yearly Sales"),
+        ("Stock Summary", "cube.box", "Stock Summary"),
+        ("Low Stock Items", "exclamationmark.triangle", "Low Stock"),
+        ("Profit & Loss", "dollarsign.circle", "Profit & Loss")
+    ]
+
     var body: some View {
         List {
             Section("Sales Reports") {
-                ReportRow(title: "Daily Sales", icon: "chart.line.uptrend.xyaxis", viewModel: viewModel, reportType: "Daily Sales")
-                ReportRow(title: "Monthly Sales", icon: "chart.bar", viewModel: viewModel, reportType: "Monthly Sales")
-                ReportRow(title: "Yearly Sales", icon: "chart.pie", viewModel: viewModel, reportType: "Yearly Sales")
+                ForEach(reports.prefix(3), id: \.type) { r in
+                    NavigationLink(destination: ReportDetailView(viewModel: viewModel, reportType: r.type)) {
+                        Label(r.title, systemImage: r.icon)
+                    }
+                }
             }
-            
             Section("Stock Reports") {
-                ReportRow(title: "Stock Summary", icon: "cube.box", viewModel: viewModel, reportType: "Stock Summary")
-                ReportRow(title: "Low Stock Items", icon: "exclamationmark.triangle", viewModel: viewModel, reportType: "Low Stock")
+                ForEach(reports.dropFirst(3).prefix(2), id: \.type) { r in
+                    NavigationLink(destination: ReportDetailView(viewModel: viewModel, reportType: r.type)) {
+                        Label(r.title, systemImage: r.icon)
+                    }
+                }
             }
-            
             Section("Financial Reports") {
-                ReportRow(title: "Profit & Loss", icon: "dollarsign.circle", viewModel: viewModel, reportType: "Profit & Loss")
+                NavigationLink(destination: ReportDetailView(viewModel: viewModel, reportType: "Profit & Loss")) {
+                    Label("Profit & Loss", systemImage: "dollarsign.circle")
+                }
             }
         }
         .navigationTitle("Reports")
     }
 }
 
-struct ReportRow: View {
-    let title: String
-    let icon: String
+struct ReportDetailView: View {
     @ObservedObject var viewModel: InventoryViewModel
     let reportType: String
     @State private var showingShareSheet = false
     @State private var pdfURL: URL?
-    
-    var body: some View {
-        HStack {
-            Label(title, systemImage: icon)
-            Spacer()
-            Button(action: {
-                generatePDF()
-            }) {
-                Image(systemName: "arrow.down.doc")
-                    .foregroundColor(.blue)
-            }
-        }
-        .sheet(isPresented: $showingShareSheet) {
-            if let url = pdfURL {
-                ShareSheet(items: [url])
-            }
-        }
-    }
-    
-    func generatePDF() {
-        var content = ""
-        
+
+    var reportContent: String {
         switch reportType {
-        case "Daily Sales":
-            content = generateSalesReport()
-        case "Monthly Sales":
-            content = generateSalesReport()
-        case "Yearly Sales":
-            content = generateSalesReport()
-        case "Stock Summary":
-            content = generateStockSummary()
-        case "Low Stock":
-            content = generateLowStockReport()
-        case "Profit & Loss":
-            content = generateProfitLossReport()
-        default:
-            content = "Report data"
+        case "Daily Sales", "Monthly Sales", "Yearly Sales": return generateSalesReport()
+        case "Stock Summary": return generateStockSummary()
+        case "Low Stock": return generateLowStockReport()
+        case "Profit & Loss": return generateProfitLossReport()
+        default: return ""
         }
-        
-        pdfURL = viewModel.generatePDF(title: reportType, content: content)
-        showingShareSheet = true
     }
-    
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    // Header
+                    LinearGradient(colors: [.indigo, .blue], startPoint: .topLeading, endPoint: .bottomTrailing)
+                        .frame(height: 80)
+                        .overlay(
+                            Text(reportType)
+                                .font(.title2.bold())
+                                .foregroundColor(.white)
+                                .padding()
+                            , alignment: .bottomLeading
+                        )
+
+                    // Content
+                    VStack(alignment: .leading, spacing: 16) {
+                        ForEach(reportContent.components(separatedBy: "\n\n"), id: \.self) { block in
+                            if !block.trimmingCharacters(in: .whitespaces).isEmpty {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    ForEach(block.components(separatedBy: "\n"), id: \.self) { line in
+                                        if !line.isEmpty {
+                                            if line.hasSuffix(":") || (!line.contains(":") && !line.contains("₹") && !line.contains("Date:") && line.count < 40) {
+                                                Text(line)
+                                                    .font(.subheadline.bold())
+                                                    .foregroundColor(.primary)
+                                            } else {
+                                                Text(line)
+                                                    .font(.subheadline)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                        }
+                                    }
+                                }
+                                .padding()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color(.systemBackground))
+                                .cornerRadius(10)
+                                .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.06), radius: 3, y: 1)
+                            }
+                        }
+                    }
+                    .padding()
+                    .padding(.bottom, 80)
+                }
+            }
+            .background(Color(.secondarySystemBackground))
+
+            // Export button
+            Button(action: {
+                pdfURL = viewModel.generatePDF(title: reportType, content: reportContent)
+                showingShareSheet = true
+            }) {
+                Label("Export PDF", systemImage: "arrow.up.doc")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(
+                        LinearGradient(colors: [.indigo, .blue], startPoint: .leading, endPoint: .trailing)
+                    )
+                    .cornerRadius(16)
+                    .shadow(color: .indigo.opacity(0.35), radius: 6, y: 3)
+            }
+            .padding()
+        }
+        .navigationTitle(reportType)
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingShareSheet) {
+            if let url = pdfURL { ShareSheet(items: [url]) }
+        }
+    }
+
     func generateSalesReport() -> String {
-        var report = "Business: \(viewModel.currentBusiness?.name ?? "Unknown")\n\n"
+        var report = "Business: \(viewModel.businessName)\n\n"
         report += "Total Sales: ₹\(String(format: "%.2f", viewModel.totalSales))\n\n"
         report += "Transactions:\n\n"
-        
-        for transaction in viewModel.currentBusinessTransactions.filter({ $0.type == .sale || $0.type == .stockOut }).prefix(50) {
-            report += "\(transaction.itemName)\n"
-            report += "Amount: ₹\(String(format: "%.2f", transaction.totalAmount))\n"
-            report += "Quantity: \(String(format: "%.1f", transaction.quantity))\n"
-            report += "Date: \(transaction.date.formatted())\n\n"
+        for t in viewModel.currentCategoryTransactions.filter({ $0.type == .sale || $0.type == .stockOut }).prefix(50) {
+            report += "\(t.itemName)\nAmount: ₹\(String(format: "%.2f", t.totalAmount))\nQty: \(String(format: "%.1f", t.quantity))\nDate: \(t.date.formatted())\n\n"
         }
-        
         return report
     }
-    
+
     func generateStockSummary() -> String {
-        var report = "Business: \(viewModel.currentBusiness?.name ?? "Unknown")\n\n"
-        report += "Total Items: \(viewModel.currentBusinessItems.count)\n\n"
-        report += "Items:\n\n"
-        
-        for item in viewModel.currentBusinessItems {
-            report += "\(item.name)\n"
-            report += "Category: \(item.category)\n"
-            report += "Stock: \(String(format: "%.1f", item.currentStock)) \(item.priceUnit)\n"
-            if let price = item.sellingPrice {
-                report += "Price: ₹\(String(format: "%.2f", price))\n"
-            }
+        var report = "Business: \(viewModel.businessName)\n\nTotal Items: \(viewModel.currentCategoryItems.count)\n\nItems:\n\n"
+        for item in viewModel.currentCategoryItems {
+            report += "\(item.name)\nStock: \(String(format: "%.1f", item.currentStock)) \(item.priceUnit)\n"
+            if let p = item.sellingPrice { report += "Price: ₹\(String(format: "%.2f", p))\n" }
             report += "\n"
         }
-        
         return report
     }
-    
+
     func generateLowStockReport() -> String {
-        var report = "Business: \(viewModel.currentBusiness?.name ?? "Unknown")\n\n"
-        report += "Low Stock Items:\n\n"
-        
-        let lowStockItems = viewModel.currentBusinessItems.filter { $0.currentStock <= 5 }
-        
-        for item in lowStockItems {
-            report += "\(item.name)\n"
-            report += "Stock: \(String(format: "%.1f", item.currentStock)) \(item.priceUnit)\n"
-            report += "Category: \(item.category)\n\n"
+        var report = "Business: \(viewModel.businessName)\n\nLow Stock Items:\n\n"
+        let low = viewModel.currentCategoryItems.filter { $0.currentStock <= 5 }
+        for item in low {
+            report += "\(item.name)\nStock: \(String(format: "%.1f", item.currentStock)) \(item.priceUnit)\n\n"
         }
-        
-        if lowStockItems.isEmpty {
-            report += "No low stock items found."
-        }
-        
+        if low.isEmpty { report += "No low stock items found." }
         return report
     }
-    
+
     func generateProfitLossReport() -> String {
-        var report = "Business: \(viewModel.currentBusiness?.name ?? "Unknown")\n\n"
-        report += "Profit & Loss Statement\n\n"
-        report += "Total Sales: ₹\(String(format: "%.2f", viewModel.totalSales))\n"
-        report += "Total Purchases: ₹\(String(format: "%.2f", viewModel.totalPurchase))\n"
-        report += "Net Profit/Loss: ₹\(String(format: "%.2f", viewModel.totalProfit))\n"
-        
-        return report
+        "Business: \(viewModel.businessName)\n\nProfit & Loss Statement\n\nTotal Sales: ₹\(String(format: "%.2f", viewModel.totalSales))\nTotal Purchases: ₹\(String(format: "%.2f", viewModel.totalPurchase))\nNet Profit/Loss: ₹\(String(format: "%.2f", viewModel.totalProfit))"
     }
+}
+
+struct ReportRow: View {
+    // kept for compatibility
+    let title: String
+    let icon: String
+    @ObservedObject var viewModel: InventoryViewModel
+    let reportType: String
+    var body: some View { EmptyView() }
 }
 
 struct ShareSheet: UIViewControllerRepresentable {
@@ -1335,24 +1334,24 @@ struct ShareSheet: UIViewControllerRepresentable {
 
 struct DetailedSummaryView: View {
     @ObservedObject var viewModel: InventoryViewModel
-    
+
     var body: some View {
         List {
             Section("Summary") {
                 HStack {
                     Text("Total Items")
                     Spacer()
-                    Text("\(viewModel.currentBusinessItems.count)")
+                    Text("\(viewModel.currentCategoryItems.count)")
                         .fontWeight(.semibold)
                 }
-                
+
                 HStack {
                     Text("Total Stock Value")
                     Spacer()
                     Text("₹ \(String(format: "%.2f", calculateTotalValue()))")
                         .fontWeight(.semibold)
                 }
-                
+
                 HStack {
                     Text("Total Purchase")
                     Spacer()
@@ -1360,7 +1359,7 @@ struct DetailedSummaryView: View {
                         .fontWeight(.semibold)
                         .foregroundColor(.red)
                 }
-                
+
                 HStack {
                     Text("Total Sales")
                     Spacer()
@@ -1368,7 +1367,7 @@ struct DetailedSummaryView: View {
                         .fontWeight(.semibold)
                         .foregroundColor(.green)
                 }
-                
+
                 HStack {
                     Text("Net Profit")
                     Spacer()
@@ -1377,9 +1376,9 @@ struct DetailedSummaryView: View {
                         .foregroundColor(viewModel.totalProfit >= 0 ? .green : .red)
                 }
             }
-            
+
             Section("Recent Transactions") {
-                ForEach(viewModel.currentBusinessTransactions.prefix(20)) { transaction in
+                ForEach(viewModel.currentCategoryTransactions.prefix(20)) { transaction in
                     HStack {
                         VStack(alignment: .leading) {
                             Text(transaction.itemName)
@@ -1388,9 +1387,9 @@ struct DetailedSummaryView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
-                        
+
                         Spacer()
-                        
+
                         VStack(alignment: .trailing) {
                             Text("₹ \(String(format: "%.2f", transaction.totalAmount))")
                                 .fontWeight(.semibold)
@@ -1404,9 +1403,9 @@ struct DetailedSummaryView: View {
         }
         .navigationTitle("Detailed Summary")
     }
-    
+
     func calculateTotalValue() -> Double {
-        viewModel.currentBusinessItems.reduce(0) { total, item in
+        viewModel.currentCategoryItems.reduce(0) { total, item in
             total + (item.currentStock * (item.sellingPrice ?? 0))
         }
     }
@@ -1417,44 +1416,43 @@ struct InventoryListView: View {
     @State private var showingAddItem = false
     @State private var searchText = ""
     @State private var selectedCategory = "All Items"
-    
+
     var filteredItems: [InventoryItem] {
-        var items = viewModel.currentBusinessItems
-        
+        var items = viewModel.currentCategoryItems
         if selectedCategory != "All Items" {
-            items = items.filter { $0.category == selectedCategory }
+            if let cat = viewModel.categories.first(where: { $0.name == selectedCategory }) {
+                items = viewModel.items.filter { $0.categoryId == cat.id }
+            }
         }
-        
         if !searchText.isEmpty {
             items = items.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
         }
-        
         return items
     }
-    
+
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(Category.categories, id: \.self) { category in
-                            Button(action: {
-                                selectedCategory = category
-                            }) {
-                                Text(category)
-                                    .font(.subheadline)
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 8)
-                                    .background(selectedCategory == category ? Color.blue : Color.gray.opacity(0.2))
-                                    .foregroundColor(selectedCategory == category ? .white : .primary)
-                                    .cornerRadius(20)
-                            }
+                    HStack(spacing: 10) {
+                        CategoryFilterChip(
+                            name: "All Items",
+                            count: viewModel.currentCategoryItems.count,
+                            isSelected: selectedCategory == "All Items"
+                        ) { selectedCategory = "All Items" }
+
+                        ForEach(viewModel.categories) { cat in
+                            CategoryFilterChip(
+                                name: cat.name,
+                                count: viewModel.items.filter { $0.categoryId == cat.id }.count,
+                                isSelected: selectedCategory == cat.name
+                            ) { selectedCategory = cat.name }
                         }
                     }
                     .padding()
                 }
-                .background(Color.gray.opacity(0.05))
-                
+                .background(Color(.secondarySystemBackground))
+
                 List {
                     ForEach(filteredItems) { item in
                         NavigationLink(destination: ItemDetailView(viewModel: viewModel, item: item)) {
@@ -1476,7 +1474,7 @@ struct InventoryListView: View {
             }
         }
     }
-    
+
     func deleteItems(at offsets: IndexSet) {
         for index in offsets {
             viewModel.deleteItem(filteredItems[index])
@@ -1487,22 +1485,17 @@ struct InventoryListView: View {
 struct InventoryItemRow: View {
     let item: InventoryItem
     @ObservedObject var viewModel: InventoryViewModel
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.name)
                         .font(.headline)
-                    if !item.category.isEmpty {
-                        Text(item.category)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
                 }
-                
+
                 Spacer()
-                
+
                 VStack(alignment: .trailing, spacing: 4) {
                     Text("\(String(format: "%.1f", item.currentStock)) \(item.priceUnit)")
                         .font(.headline)
@@ -1513,7 +1506,7 @@ struct InventoryItemRow: View {
                     }
                 }
             }
-            
+
             HStack(spacing: 20) {
                 VStack(alignment: .leading) {
                     Text("Stock In")
@@ -1523,7 +1516,7 @@ struct InventoryItemRow: View {
                         .font(.caption)
                         .foregroundColor(.green)
                 }
-                
+
                 VStack(alignment: .leading) {
                     Text("Stock Out")
                         .font(.caption2)
@@ -1532,7 +1525,7 @@ struct InventoryItemRow: View {
                         .font(.caption)
                         .foregroundColor(.red)
                 }
-                
+
                 Spacer()
             }
         }
@@ -1543,22 +1536,21 @@ struct InventoryItemRow: View {
 struct AddItemView: View {
     @ObservedObject var viewModel: InventoryViewModel
     @Environment(\.dismiss) var dismiss
-    
+
     @State private var name = ""
     @State private var purchasePrice = ""
     @State private var mrp = ""
     @State private var sellingPrice = ""
     @State private var priceUnit = "Piece"
-    @State private var category = ""
     @State private var openingStock = ""
-    
+
     var body: some View {
         NavigationView {
             Form {
                 Section("Item Details") {
                     TextField("Item Name *", text: $name)
                 }
-                
+
                 Section("Pricing") {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Purchase Price")
@@ -1567,7 +1559,7 @@ struct AddItemView: View {
                         TextField("0.00", text: $purchasePrice)
                             .keyboardType(.decimalPad)
                     }
-                    
+
                     VStack(alignment: .leading, spacing: 4) {
                         Text("MRP (Maximum Retail Price)")
                             .font(.caption)
@@ -1575,7 +1567,7 @@ struct AddItemView: View {
                         TextField("0.00", text: $mrp)
                             .keyboardType(.decimalPad)
                     }
-                    
+
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Selling Price")
                             .font(.caption)
@@ -1583,22 +1575,15 @@ struct AddItemView: View {
                         TextField("0.00", text: $sellingPrice)
                             .keyboardType(.decimalPad)
                     }
-                    
+
                     Picker("Price Unit", selection: $priceUnit) {
                         ForEach(PriceUnit.units, id: \.self) { unit in
                             Text(unit).tag(unit)
                         }
                     }
                 }
-                
-                Section("Additional Info") {
-                    Picker("Category", selection: $category) {
-                        Text("Select Category").tag("")
-                        ForEach(Category.categories.filter { $0 != "All Items" }, id: \.self) { cat in
-                            Text(cat).tag(cat)
-                        }
-                    }
-                    
+
+                Section("Stock") {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Opening Stock *")
                             .font(.caption)
@@ -1623,23 +1608,21 @@ struct AddItemView: View {
             }
         }
     }
-    
+
     var isValid: Bool {
         !name.isEmpty && Double(openingStock) != nil
     }
-    
+
     func saveItem() {
-        guard let businessId = viewModel.currentBusinessId else { return }
-        
+        guard let categoryId = viewModel.currentCategoryId else { return }
         let stock = Double(openingStock) ?? 0
         let item = InventoryItem(
-            businessId: businessId,
+            categoryId: categoryId,
             name: name,
             purchasePrice: Double(purchasePrice),
             mrp: Double(mrp),
             sellingPrice: Double(sellingPrice),
             priceUnit: priceUnit,
-            category: category,
             openingStock: stock,
             currentStock: stock,
             dateAdded: Date()
@@ -1663,9 +1646,6 @@ struct ItemDetailView: View {
         List {
             Section("Item Information") {
                 DetailRow(label: "Name", value: item.name)
-                if !item.category.isEmpty {
-                    DetailRow(label: "Category", value: item.category)
-                }
                 if let price = item.purchasePrice {
                     DetailRow(label: "Purchase Price", value: "₹\(String(format: "%.2f", price))")
                 }
@@ -1838,14 +1818,13 @@ struct EditItemView: View {
     @ObservedObject var viewModel: InventoryViewModel
     let item: InventoryItem
     @Environment(\.dismiss) var dismiss
-    
+
     @State private var name: String
     @State private var purchasePrice: String
     @State private var mrp: String
     @State private var sellingPrice: String
     @State private var priceUnit: String
-    @State private var category: String
-    
+
     init(viewModel: InventoryViewModel, item: InventoryItem) {
         self.viewModel = viewModel
         self.item = item
@@ -1854,9 +1833,8 @@ struct EditItemView: View {
         _mrp = State(initialValue: item.mrp != nil ? String(item.mrp!) : "")
         _sellingPrice = State(initialValue: item.sellingPrice != nil ? String(item.sellingPrice!) : "")
         _priceUnit = State(initialValue: item.priceUnit)
-        _category = State(initialValue: item.category)
     }
-    
+
     var body: some View {
         NavigationView {
             Form {
@@ -1868,7 +1846,7 @@ struct EditItemView: View {
                         TextField("Item Name", text: $name)
                     }
                 }
-                
+
                 Section("Pricing") {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Purchase Price")
@@ -1877,7 +1855,7 @@ struct EditItemView: View {
                         TextField("0.00", text: $purchasePrice)
                             .keyboardType(.decimalPad)
                     }
-                    
+
                     VStack(alignment: .leading, spacing: 4) {
                         Text("MRP (Maximum Retail Price)")
                             .font(.caption)
@@ -1885,7 +1863,7 @@ struct EditItemView: View {
                         TextField("0.00", text: $mrp)
                             .keyboardType(.decimalPad)
                     }
-                    
+
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Selling Price")
                             .font(.caption)
@@ -1893,19 +1871,10 @@ struct EditItemView: View {
                         TextField("0.00", text: $sellingPrice)
                             .keyboardType(.decimalPad)
                     }
-                    
+
                     Picker("Price Unit", selection: $priceUnit) {
                         ForEach(PriceUnit.units, id: \.self) { unit in
                             Text(unit).tag(unit)
-                        }
-                    }
-                }
-                
-                Section("Additional Info") {
-                    Picker("Category", selection: $category) {
-                        Text("Select Category").tag("")
-                        ForEach(Category.categories.filter { $0 != "All Items" }, id: \.self) { cat in
-                            Text(cat).tag(cat)
                         }
                     }
                 }
@@ -1924,7 +1893,7 @@ struct EditItemView: View {
             }
         }
     }
-    
+
     func saveChanges() {
         var updatedItem = item
         updatedItem.name = name
@@ -1932,8 +1901,6 @@ struct EditItemView: View {
         updatedItem.mrp = Double(mrp)
         updatedItem.sellingPrice = Double(sellingPrice)
         updatedItem.priceUnit = priceUnit
-        updatedItem.category = category
-        
         viewModel.updateItem(updatedItem)
         dismiss()
     }
@@ -1942,20 +1909,23 @@ struct EditItemView: View {
 struct SettingsView: View {
     @ObservedObject var viewModel: InventoryViewModel
     @EnvironmentObject var authManager: AuthenticationManager
-    @State private var showingAddBusiness = false
+    @State private var showingAddCategory = false
     @State private var showingLogoutAlert = false
     @State private var showingLoginSheet = false
-    
+    @State private var editingBusinessName = false
+    @State private var draftBusinessName = ""
+
     var body: some View {
         NavigationView {
             List {
+                // User profile section
                 Section {
                     if !authManager.isSignedIn {
                         Button(action: { showingLoginSheet = true }) {
                             HStack {
                                 Image(systemName: "person.circle.fill")
                                     .font(.largeTitle)
-                                    .foregroundColor(.blue)
+                                    .foregroundColor(.indigo)
                                 VStack(alignment: .leading) {
                                     Text("Sign in with Google")
                                         .font(.headline)
@@ -1971,107 +1941,118 @@ struct SettingsView: View {
                         HStack {
                             if let imageURL = authManager.userProfileImageURL {
                                 AsyncImage(url: imageURL) { image in
-                                    image
-                                        .resizable()
-                                        .scaledToFill()
+                                    image.resizable().scaledToFill()
                                 } placeholder: {
-                                    Image(systemName: "person.circle.fill")
-                                        .font(.largeTitle)
-                                        .foregroundColor(.blue)
+                                    Image(systemName: "person.circle.fill").font(.largeTitle).foregroundColor(.indigo)
                                 }
                                 .frame(width: 50, height: 50)
                                 .clipShape(Circle())
                             } else {
-                                Image(systemName: "person.circle.fill")
-                                    .font(.largeTitle)
-                                    .foregroundColor(.blue)
+                                Image(systemName: "person.circle.fill").font(.largeTitle).foregroundColor(.indigo)
                             }
                             VStack(alignment: .leading) {
-                                Text(authManager.userDisplayName)
-                                    .font(.headline)
-                                Text(authManager.userEmail)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                                Text(authManager.userDisplayName).font(.headline)
+                                Text(authManager.userEmail).font(.caption).foregroundColor(.secondary)
                             }
                             .padding(.leading, 8)
                         }
                         .padding(.vertical, 8)
                     }
                 }
-                
-                Section("Businesses") {
-                    ForEach(viewModel.businesses) { business in
+
+                // Business profile
+                Section("Business Profile") {
+                    if editingBusinessName {
                         HStack {
-                            Text(business.name)
+                            TextField("Business Name", text: $draftBusinessName)
+                                .textFieldStyle(.plain)
                             Spacer()
-                            if business.id == viewModel.currentBusinessId {
-                                Text("Active")
-                                    .font(.caption)
-                                    .foregroundColor(.green)
+                            Button("Save") {
+                                viewModel.updateBusinessName(draftBusinessName)
+                                editingBusinessName = false
                             }
+                            .foregroundColor(.indigo)
+                            .fontWeight(.semibold)
+                        }
+                    } else {
+                        HStack {
+                            Text(viewModel.businessName.isEmpty ? "Set business name…" : viewModel.businessName)
+                                .foregroundColor(viewModel.businessName.isEmpty ? .secondary : .primary)
+                            Spacer()
+                            Button("Edit") {
+                                draftBusinessName = viewModel.businessName
+                                editingBusinessName = true
+                            }
+                            .foregroundColor(.indigo)
                         }
                     }
-                    .onDelete(perform: deleteBusiness)
-                    
-                    Button(action: { showingAddBusiness = true }) {
-                        Label("Add Business", systemImage: "plus.circle.fill")
+                }
+
+                // Categories
+                Section("Categories") {
+                    ForEach(viewModel.categories) { cat in
+                        HStack {
+                            Text(cat.name)
+                            Spacer()
+                            Text("\(viewModel.items.filter { $0.categoryId == cat.id }.count) items")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            if cat.id == viewModel.currentCategoryId {
+                                Image(systemName: "checkmark.circle.fill").foregroundColor(.indigo).font(.caption)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture { viewModel.switchCategory(to: cat.id) }
+                    }
+                    .onDelete(perform: deleteCategory)
+
+                    Button(action: { showingAddCategory = true }) {
+                        Label("Add Category", systemImage: "plus.circle.fill")
+                            .foregroundColor(.indigo)
                     }
                 }
-                
+
+                // Support
                 Section("Support") {
                     NavigationLink(destination: AppSupportView()) {
                         Label("App Support", systemImage: "questionmark.circle")
                     }
-                    
                     NavigationLink(destination: AboutView()) {
                         Label("About", systemImage: "info.circle")
                     }
-                    
                     NavigationLink(destination: PrivacyPolicyView()) {
                         Label("Privacy Policy", systemImage: "hand.raised")
                     }
-                    
                     NavigationLink(destination: TermsView()) {
                         Label("Terms of Service", systemImage: "doc.text")
                     }
-                    
-                    Link(destination: URL(string: "mailto:support@inventoryapp.com")!) {
-                        Label("Contact Us", systemImage: "envelope")
-                    }
                 }
-                
+
                 if authManager.isSignedIn {
                     Section {
                         Button(action: { showingLogoutAlert = true }) {
-                            Label("Sign Out", systemImage: "arrow.right.square")
-                                .foregroundColor(.red)
+                            Label("Sign Out", systemImage: "arrow.right.square").foregroundColor(.red)
                         }
                     }
                 }
             }
             .navigationTitle("Settings")
-            .sheet(isPresented: $showingAddBusiness) {
-                AddBusinessView(viewModel: viewModel)
-            }
-            .sheet(isPresented: $showingLoginSheet) {
-                GoogleSignInView()
-            }
+            .sheet(isPresented: $showingAddCategory) { AddCategoryView(viewModel: viewModel) }
+            .sheet(isPresented: $showingLoginSheet) { GoogleSignInView() }
             .alert("Sign Out", isPresented: $showingLogoutAlert) {
                 Button("Cancel", role: .cancel) {}
-                Button("Sign Out", role: .destructive) {
-                    authManager.signOut()
-                }
+                Button("Sign Out", role: .destructive) { authManager.signOut() }
             } message: {
                 Text("Are you sure you want to sign out?")
             }
         }
     }
-    
-    func deleteBusiness(at offsets: IndexSet) {
+
+    func deleteCategory(at offsets: IndexSet) {
         for index in offsets {
-            let business = viewModel.businesses[index]
-            if viewModel.businesses.count > 1 {
-                viewModel.deleteBusiness(business)
+            let cat = viewModel.categories[index]
+            if viewModel.categories.count > 1 {
+                viewModel.deleteCategory(cat)
             }
         }
     }
@@ -2319,32 +2300,29 @@ struct TermsView: View {
     }
 }
 
-struct AddBusinessView: View {
+struct AddCategoryView: View {
     @ObservedObject var viewModel: InventoryViewModel
     @Environment(\.dismiss) var dismiss
-    
-    @State private var businessName = ""
-    
+    @State private var categoryName = ""
+
     var body: some View {
         NavigationView {
             Form {
-                Section("Business Details") {
-                    TextField("Business Name", text: $businessName)
+                Section("Category Details") {
+                    TextField("Category Name", text: $categoryName)
                 }
             }
-            .navigationTitle("Add Business")
+            .navigationTitle("Add Category")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        let business = Business(name: businessName, dateCreated: Date())
-                        viewModel.addBusiness(business)
+                        let cat = UserCategory(name: categoryName, dateCreated: Date())
+                        viewModel.addCategory(cat)
                         dismiss()
                     }
-                    .disabled(businessName.isEmpty)
+                    .disabled(categoryName.isEmpty)
                 }
             }
         }
