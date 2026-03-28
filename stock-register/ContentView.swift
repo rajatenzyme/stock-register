@@ -23,8 +23,33 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     }
 }
 
+// MARK: - Brand Colors
+extension Color {
+    static let gpOrange      = Color(red: 1.0,  green: 0.55, blue: 0.11)
+    static let gpOrangeDark  = Color(red: 0.88, green: 0.38, blue: 0.04)
+    static let gpOrangeLight = Color(red: 1.0,  green: 0.55, blue: 0.11).opacity(0.12)
+}
+
+// MARK: - GodownPe Logo Mark
+struct GodownPeLogoMark: View {
+    var size: CGFloat = 56
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.22)
+                .fill(LinearGradient(
+                    colors: [.gpOrange, .gpOrangeDark],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ))
+                .frame(width: size, height: size)
+            Image(systemName: "building.2.fill")
+                .font(.system(size: size * 0.48, weight: .bold))
+                .foregroundColor(.white)
+        }
+    }
+}
+
 @main
-struct InventoryApp: App {
+struct GodownPeApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var authManager = AuthenticationManager.shared
     
@@ -287,7 +312,7 @@ class InventoryViewModel: ObservableObject {
 
     func generatePDF(title: String, content: String) -> URL? {
         let pdfMetaData = [
-            kCGPDFContextCreator: "Inventory Manager",
+            kCGPDFContextCreator: "GodownPe",
             kCGPDFContextAuthor: "User",
             kCGPDFContextTitle: title
         ]
@@ -538,7 +563,7 @@ struct ContentView: View {
                 }
                 .tag(4)
         }
-        .tint(.indigo)
+        .tint(.gpOrange)
         .onAppear {
             viewModel.configure(userId: authManager.isSignedIn ? authManager.userId : "")
         }
@@ -552,91 +577,93 @@ struct HomeView: View {
     var body: some View {
         NavigationView {
             ScrollView {
-                VStack(spacing: 24) {
-                    // App Logo
-                    VStack(spacing: 16) {
-                        Image(systemName: "cube.box.fill")
-                            .font(.system(size: 80))
-                            .foregroundColor(.blue)
-                        
-                        Text("Inventory Manager")
-                            .font(.largeTitle)
-                            .fontWeight(.bold)
-                        
-                        Text("Manage your stock effortlessly")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.top, 40)
-                    
-                    // Features
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Features")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .padding(.horizontal)
-                        
-                        FeatureCard(
-                            icon: "chart.line.uptrend.xyaxis",
-                            title: "Real-time Tracking",
-                            description: "Monitor your inventory levels in real-time with instant updates"
+                VStack(spacing: 0) {
+
+                    // Hero banner
+                    ZStack {
+                        LinearGradient(
+                            colors: [.gpOrange, .gpOrangeDark],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
                         )
-                        
-                        FeatureCard(
-                            icon: "building.2",
-                            title: "Multi-Business Support",
-                            description: "Manage multiple businesses from a single account"
-                        )
-                        
-                        FeatureCard(
-                            icon: "doc.text.fill",
-                            title: "Detailed Reports",
-                            description: "Generate comprehensive reports and export to PDF"
-                        )
-                        
-                        FeatureCard(
-                            icon: "arrow.triangle.2.circlepath",
-                            title: "Transaction History",
-                            description: "Keep track of all stock movements with detailed history"
-                        )
-                        
-                        FeatureCard(
-                            icon: "square.grid.2x2",
-                            title: "Category Management",
-                            description: "Organize items by categories for easy access"
-                        )
-                        
-                        FeatureCard(
-                            icon: "lock.shield",
-                            title: "Secure & Private",
-                            description: "All your data stays on your device, completely private"
-                        )
-                    }
-                    
-                    // Quick Start
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Quick Start Guide")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .padding(.horizontal)
-                        
-                        VStack(alignment: .leading, spacing: 8) {
-                            QuickStartStep(number: "1", text: "Add your business in Settings")
-                            QuickStartStep(number: "2", text: "Create items in the Items tab")
-                            QuickStartStep(number: "3", text: "Set opening stock for each item")
-                            QuickStartStep(number: "4", text: "Track stock in/out from Stock tab")
-                            QuickStartStep(number: "5", text: "View reports and insights")
+                        .ignoresSafeArea(edges: .top)
+
+                        VStack(spacing: 14) {
+                            GodownPeLogoMark(size: 72)
+
+                            VStack(spacing: 6) {
+                                HStack(spacing: 0) {
+                                    Text("Godown")
+                                        .font(.system(size: 34, weight: .black))
+                                        .foregroundColor(.white)
+                                    Text("Pe")
+                                        .font(.system(size: 34, weight: .black))
+                                        .foregroundColor(.white.opacity(0.75))
+                                }
+
+                                Text("Aapka Godown, Aapki Muthi Mein")
+                                    .font(.subheadline)
+                                    .foregroundColor(.white.opacity(0.85))
+                                    .multilineTextAlignment(.center)
+                            }
                         }
-                        .padding()
-                        .background(Color.blue.opacity(0.1))
-                        .cornerRadius(12)
+                        .padding(.vertical, 44)
                         .padding(.horizontal)
                     }
-                    
-                    Spacer(minLength: 40)
+                    .clipShape(
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 0,
+                            bottomLeadingRadius: 28,
+                            bottomTrailingRadius: 28,
+                            topTrailingRadius: 0
+                        )
+                    )
+
+                    VStack(spacing: 24) {
+
+                        // Feature cards
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Why GodownPe?")
+                                .font(.title3.bold())
+                                .padding(.horizontal)
+                                .padding(.top, 8)
+
+                            FeatureCard(icon: "chart.line.uptrend.xyaxis", title: "Live Stock Tracking",
+                                description: "See your godown stock live — no delays, no confusion")
+                            FeatureCard(icon: "building.2.fill", title: "Multiple Godowns",
+                                description: "Manage all your shops or godowns from one account")
+                            FeatureCard(icon: "doc.text.fill", title: "PDF Reports",
+                                description: "Generate and share stock & sales reports in one tap")
+                            FeatureCard(icon: "arrow.triangle.2.circlepath", title: "Full Transaction History",
+                                description: "Every stock in/out is recorded with date and price")
+                            FeatureCard(icon: "lock.shield.fill", title: "Safe & Private",
+                                description: "Your business data is protected with Google sign-in")
+                        }
+
+                        // Quick start
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("How to Get Started")
+                                .font(.title3.bold())
+                                .padding(.horizontal)
+
+                            VStack(alignment: .leading, spacing: 10) {
+                                QuickStartStep(number: "1", text: "Set your business name in Settings")
+                                QuickStartStep(number: "2", text: "Add items from the Items tab")
+                                QuickStartStep(number: "3", text: "Enter opening stock for each item")
+                                QuickStartStep(number: "4", text: "Record stock In / Out from Stock tab")
+                                QuickStartStep(number: "5", text: "View profits & reports anytime")
+                            }
+                            .padding()
+                            .background(Color.gpOrangeLight)
+                            .cornerRadius(14)
+                            .padding(.horizontal)
+                        }
+
+                        Spacer(minLength: 40)
+                    }
+                    .padding(.top, 20)
                 }
             }
-            .navigationTitle("Welcome")
+            .navigationBarHidden(true)
         }
     }
 }
@@ -650,7 +677,7 @@ struct FeatureCard: View {
         HStack(spacing: 16) {
             Image(systemName: icon)
                 .font(.title)
-                .foregroundColor(.blue)
+                .foregroundColor(.gpOrange)
                 .frame(width: 50)
             
             VStack(alignment: .leading, spacing: 4) {
@@ -678,7 +705,7 @@ struct QuickStartStep: View {
                 .font(.headline)
                 .foregroundColor(.white)
                 .frame(width: 30, height: 30)
-                .background(Color.blue)
+                .background(Color.gpOrange)
                 .clipShape(Circle())
             
             Text(text)
@@ -740,7 +767,7 @@ struct DashboardView: View {
                         // Gradient header
                         ZStack {
                             LinearGradient(
-                                colors: [Color.indigo, Color.blue],
+                                colors: [.gpOrange, .gpOrangeDark],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
@@ -756,13 +783,17 @@ struct DashboardView: View {
 
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(viewModel.businessName.isEmpty ? "My Business" : viewModel.businessName)
-                                            .font(.title2.bold())
-                                            .foregroundColor(.white)
-                                        Text("Stock Dashboard")
-                                            .font(.caption)
-                                            .foregroundColor(.white.opacity(0.75))
+                                    HStack(spacing: 10) {
+                                        GodownPeLogoMark(size: 36)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(viewModel.businessName.isEmpty ? "My Business" : viewModel.businessName)
+                                                .font(.title2.bold())
+                                                .foregroundColor(.white)
+                                            HStack(spacing: 0) {
+                                                Text("Godown").font(.caption).foregroundColor(.white.opacity(0.9))
+                                                Text("Pe").font(.caption).foregroundColor(.white.opacity(0.6))
+                                            }
+                                        }
                                     }
                                     Spacer()
                                     Button(action: { selectedTab = 4 }) {
@@ -777,26 +808,56 @@ struct DashboardView: View {
                         }
 
                         VStack(spacing: 12) {
-                            // Category chips
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 10) {
-                                    CategoryFilterChip(
-                                        name: "All Items",
-                                        count: viewModel.items.count,
-                                        isSelected: selectedCategoryId == nil
-                                    ) { selectedCategoryId = nil }
-
-                                    ForEach(viewModel.categories) { cat in
-                                        CategoryFilterChip(
-                                            name: cat.name,
-                                            count: viewModel.items.filter { $0.categoryId == cat.id }.count,
-                                            isSelected: selectedCategoryId == cat.id
-                                        ) { selectedCategoryId = cat.id }
+                            // Category dropdown filter
+                            Menu {
+                                Button(action: { selectedCategoryId = nil }) {
+                                    HStack {
+                                        Text("All Godowns (\(viewModel.items.count) items)")
+                                        if selectedCategoryId == nil {
+                                            Image(systemName: "checkmark")
+                                        }
                                     }
                                 }
-                                .padding(.horizontal)
-                                .padding(.vertical, 8)
+                                Divider()
+                                ForEach(viewModel.categories) { cat in
+                                    let count = viewModel.items.filter { $0.categoryId == cat.id }.count
+                                    Button(action: { selectedCategoryId = cat.id }) {
+                                        HStack {
+                                            Text("\(cat.name)  (\(count) items)")
+                                            if selectedCategoryId == cat.id {
+                                                Image(systemName: "checkmark")
+                                            }
+                                        }
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                                        .foregroundColor(.gpOrange)
+                                        .font(.title3)
+                                    let label: String = {
+                                        if let id = selectedCategoryId,
+                                           let cat = viewModel.categories.first(where: { $0.id == id }) {
+                                            let count = viewModel.items.filter { $0.categoryId == cat.id }.count
+                                            return "\(cat.name)  (\(count) items)"
+                                        }
+                                        return "All Godowns  (\(viewModel.items.count) items)"
+                                    }()
+                                    Text(label)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    Image(systemName: "chevron.down")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(Color(.systemBackground))
+                                .cornerRadius(12)
+                                .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.07), radius: 4, y: 2)
                             }
+                            .padding(.horizontal)
 
                             // Date & period row
                             HStack {
@@ -858,11 +919,11 @@ struct DashboardView: View {
                                 Divider()
                                 HStack {
                                     NavigationLink(destination: ReportsView(viewModel: viewModel)) {
-                                        Text("Reports →").foregroundColor(.indigo)
+                                        Text("Reports →").foregroundColor(.gpOrange)
                                     }
                                     Spacer()
                                     NavigationLink(destination: DetailedSummaryView(viewModel: viewModel)) {
-                                        Text("Detailed Summary →").foregroundColor(.indigo)
+                                        Text("Detailed Summary →").foregroundColor(.gpOrange)
                                     }
                                 }
                             }
@@ -895,13 +956,13 @@ struct DashboardView: View {
                                     } label: {
                                         Image(systemName: "arrow.up.arrow.down")
                                             .font(.title3)
-                                            .foregroundColor(.indigo)
+                                            .foregroundColor(.gpOrange)
                                     }
 
                                     NavigationLink(destination: ReportsView(viewModel: viewModel)) {
                                         Image(systemName: "doc.text.fill")
                                             .font(.title3)
-                                            .foregroundColor(.indigo)
+                                            .foregroundColor(.gpOrange)
                                     }
                                 }
                                 .padding(.horizontal)
@@ -929,10 +990,10 @@ struct DashboardView: View {
                         .foregroundColor(.white)
                         .padding(18)
                         .background(
-                            LinearGradient(colors: [.indigo, .blue], startPoint: .topLeading, endPoint: .bottomTrailing)
+                            LinearGradient(colors: [.gpOrange, .gpOrangeDark], startPoint: .topLeading, endPoint: .bottomTrailing)
                         )
                         .clipShape(Circle())
-                        .shadow(color: .indigo.opacity(0.4), radius: 8, y: 4)
+                        .shadow(color: .gpOrange.opacity(0.45), radius: 8, y: 4)
                 }
                 .padding()
             }
@@ -955,7 +1016,7 @@ struct CategoryFilterChip: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
-            .background(isSelected ? Color.indigo : Color(.tertiarySystemFill))
+            .background(isSelected ? Color.gpOrange : Color(.tertiarySystemFill))
             .foregroundColor(isSelected ? .white : .primary)
             .cornerRadius(20)
         }
@@ -1188,11 +1249,15 @@ struct ReportsView: View {
     }
 }
 
+struct ExportURL: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
 struct ReportDetailView: View {
     @ObservedObject var viewModel: InventoryViewModel
     let reportType: String
-    @State private var showingShareSheet = false
-    @State private var pdfURL: URL?
+    @State private var exportURL: ExportURL?
 
     var reportContent: String {
         switch reportType {
@@ -1209,7 +1274,7 @@ struct ReportDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     // Header
-                    LinearGradient(colors: [.indigo, .blue], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    LinearGradient(colors: [.gpOrange, .gpOrangeDark], startPoint: .topLeading, endPoint: .bottomTrailing)
                         .frame(height: 80)
                         .overlay(
                             Text(reportType)
@@ -1254,8 +1319,9 @@ struct ReportDetailView: View {
 
             // Export button
             Button(action: {
-                pdfURL = viewModel.generatePDF(title: reportType, content: reportContent)
-                showingShareSheet = true
+                if let url = viewModel.generatePDF(title: reportType, content: reportContent) {
+                    exportURL = ExportURL(url: url)
+                }
             }) {
                 Label("Export PDF", systemImage: "arrow.up.doc")
                     .font(.headline)
@@ -1263,17 +1329,17 @@ struct ReportDetailView: View {
                     .frame(maxWidth: .infinity)
                     .padding()
                     .background(
-                        LinearGradient(colors: [.indigo, .blue], startPoint: .leading, endPoint: .trailing)
+                        LinearGradient(colors: [.gpOrange, .gpOrangeDark], startPoint: .leading, endPoint: .trailing)
                     )
                     .cornerRadius(16)
-                    .shadow(color: .indigo.opacity(0.35), radius: 6, y: 3)
+                    .shadow(color: .gpOrange.opacity(0.35), radius: 6, y: 3)
             }
             .padding()
         }
         .navigationTitle(reportType)
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showingShareSheet) {
-            if let url = pdfURL { ShareSheet(items: [url]) }
+        .sheet(item: $exportURL) { item in
+            ShareSheet(items: [item.url])
         }
     }
 
@@ -1543,12 +1609,58 @@ struct AddItemView: View {
     @State private var sellingPrice = ""
     @State private var priceUnit = "Piece"
     @State private var openingStock = ""
+    @State private var selectedCategoryId: UUID? = nil
+    @State private var showingAddGodown = false
+    @State private var newGodownName = ""
 
     var body: some View {
         NavigationView {
             Form {
                 Section("Item Details") {
                     TextField("Item Name *", text: $name)
+                }
+
+                Section {
+                    if viewModel.categories.isEmpty {
+                        Text("No godowns yet. Add one below.")
+                            .foregroundColor(.secondary)
+                            .font(.subheadline)
+                    } else {
+                        Picker("Godown (Category)", selection: $selectedCategoryId) {
+                            ForEach(viewModel.categories) { cat in
+                                let count = viewModel.items.filter { $0.categoryId == cat.id }.count
+                                Text("\(cat.name)  (\(count) items)").tag(Optional(cat.id))
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(.gpOrange)
+                    }
+
+                    if showingAddGodown {
+                        HStack {
+                            TextField("Godown name", text: $newGodownName)
+                            Button("Add") {
+                                let trimmed = newGodownName.trimmingCharacters(in: .whitespaces)
+                                guard !trimmed.isEmpty else { return }
+                                let cat = UserCategory(name: trimmed, dateCreated: Date())
+                                viewModel.addCategory(cat)
+                                selectedCategoryId = cat.id
+                                newGodownName = ""
+                                showingAddGodown = false
+                            }
+                            .disabled(newGodownName.trimmingCharacters(in: .whitespaces).isEmpty)
+                            .foregroundColor(.gpOrange)
+                            .fontWeight(.semibold)
+                        }
+                    } else {
+                        Button(action: { showingAddGodown = true }) {
+                            Label("Add New Godown", systemImage: "plus.circle.fill")
+                                .foregroundColor(.gpOrange)
+                                .font(.subheadline)
+                        }
+                    }
+                } header: {
+                    Text("Godown / Category")
                 }
 
                 Section("Pricing") {
@@ -1595,26 +1707,29 @@ struct AddItemView: View {
             }
             .navigationTitle("Add Item")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                if selectedCategoryId == nil {
+                    selectedCategoryId = viewModel.currentCategoryId ?? viewModel.categories.first?.id
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        saveItem()
-                    }
-                    .disabled(!isValid)
+                    Button("Save") { saveItem() }
+                        .disabled(!isValid)
                 }
             }
         }
     }
 
     var isValid: Bool {
-        !name.isEmpty && Double(openingStock) != nil
+        !name.isEmpty && Double(openingStock) != nil && selectedCategoryId != nil
     }
 
     func saveItem() {
-        guard let categoryId = viewModel.currentCategoryId else { return }
+        guard let categoryId = selectedCategoryId ?? viewModel.currentCategoryId else { return }
         let stock = Double(openingStock) ?? 0
         let item = InventoryItem(
             categoryId: categoryId,
@@ -1925,7 +2040,7 @@ struct SettingsView: View {
                             HStack {
                                 Image(systemName: "person.circle.fill")
                                     .font(.largeTitle)
-                                    .foregroundColor(.indigo)
+                                    .foregroundColor(.gpOrange)
                                 VStack(alignment: .leading) {
                                     Text("Sign in with Google")
                                         .font(.headline)
@@ -1943,12 +2058,12 @@ struct SettingsView: View {
                                 AsyncImage(url: imageURL) { image in
                                     image.resizable().scaledToFill()
                                 } placeholder: {
-                                    Image(systemName: "person.circle.fill").font(.largeTitle).foregroundColor(.indigo)
+                                    Image(systemName: "person.circle.fill").font(.largeTitle).foregroundColor(.gpOrange)
                                 }
                                 .frame(width: 50, height: 50)
                                 .clipShape(Circle())
                             } else {
-                                Image(systemName: "person.circle.fill").font(.largeTitle).foregroundColor(.indigo)
+                                Image(systemName: "person.circle.fill").font(.largeTitle).foregroundColor(.gpOrange)
                             }
                             VStack(alignment: .leading) {
                                 Text(authManager.userDisplayName).font(.headline)
@@ -1971,7 +2086,7 @@ struct SettingsView: View {
                                 viewModel.updateBusinessName(draftBusinessName)
                                 editingBusinessName = false
                             }
-                            .foregroundColor(.indigo)
+                            .foregroundColor(.gpOrange)
                             .fontWeight(.semibold)
                         }
                     } else {
@@ -1983,7 +2098,7 @@ struct SettingsView: View {
                                 draftBusinessName = viewModel.businessName
                                 editingBusinessName = true
                             }
-                            .foregroundColor(.indigo)
+                            .foregroundColor(.gpOrange)
                         }
                     }
                 }
@@ -1998,7 +2113,7 @@ struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                             if cat.id == viewModel.currentCategoryId {
-                                Image(systemName: "checkmark.circle.fill").foregroundColor(.indigo).font(.caption)
+                                Image(systemName: "checkmark.circle.fill").foregroundColor(.gpOrange).font(.caption)
                             }
                         }
                         .contentShape(Rectangle())
@@ -2008,7 +2123,7 @@ struct SettingsView: View {
 
                     Button(action: { showingAddCategory = true }) {
                         Label("Add Category", systemImage: "plus.circle.fill")
-                            .foregroundColor(.indigo)
+                            .foregroundColor(.gpOrange)
                     }
                 }
 
@@ -2061,71 +2176,78 @@ struct SettingsView: View {
 struct GoogleSignInView: View {
     @EnvironmentObject var authManager: AuthenticationManager
     @Environment(\.dismiss) var dismiss
-    
+
     var body: some View {
         NavigationView {
-            VStack(spacing: 24) {
-                Spacer()
-                
-                Image(systemName: "cube.box.fill")
-                    .font(.system(size: 80))
-                    .foregroundColor(.blue)
-                
-                Text("Welcome to Inventory Manager")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                
-                Text("Sign in with your Google account to sync your data across devices")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
+            VStack(spacing: 0) {
+
+                // Top brand area
+                LinearGradient(colors: [.gpOrange, .gpOrangeDark], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .frame(height: 220)
+                    .overlay(
+                        VStack(spacing: 12) {
+                            GodownPeLogoMark(size: 68)
+                            HStack(spacing: 0) {
+                                Text("Godown").font(.system(size: 28, weight: .black)).foregroundColor(.white)
+                                Text("Pe").font(.system(size: 28, weight: .black)).foregroundColor(.white.opacity(0.75))
+                            }
+                        }
+                    )
+                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 28, bottomTrailingRadius: 28, topTrailingRadius: 0))
+
+                VStack(spacing: 24) {
+                    Spacer()
+
+                    VStack(spacing: 8) {
+                        Text("Welcome Back!")
+                            .font(.title2.bold())
+                        Text("Sign in to sync your godown data\nacross all your devices")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+
+                    if let error = authManager.errorMessage {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+
+                    Button(action: {
+                        Task {
+                            await authManager.signIn()
+                            if authManager.isSignedIn { dismiss() }
+                        }
+                    }) {
+                        HStack(spacing: 12) {
+                            if authManager.isLoading {
+                                ProgressView().progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            } else {
+                                Image(systemName: "g.circle.fill").font(.title2)
+                                Text("Continue with Google").fontWeight(.semibold)
+                            }
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(LinearGradient(colors: [.gpOrange, .gpOrangeDark], startPoint: .leading, endPoint: .trailing))
+                        .cornerRadius(14)
+                        .shadow(color: .gpOrange.opacity(0.35), radius: 6, y: 3)
+                    }
                     .padding(.horizontal)
-                
-                if let error = authManager.errorMessage {
-                    Text(error)
+                    .disabled(authManager.isLoading)
+
+                    Spacer()
+
+                    Text("Your business data is private and protected")
                         .font(.caption)
-                        .foregroundColor(.red)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal)
+                        .foregroundColor(.secondary)
+                        .padding(.bottom, 8)
                 }
-                
-                Button(action: {
-                    Task {
-                        await authManager.signIn()
-                        if authManager.isSignedIn {
-                            dismiss()
-                        }
-                    }
-                }) {
-                    HStack(spacing: 12) {
-                        if authManager.isLoading {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        } else {
-                            Image(systemName: "g.circle.fill")
-                                .font(.title2)
-                            Text("Sign in with Google")
-                                .fontWeight(.semibold)
-                        }
-                    }
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.blue)
-                    .cornerRadius(12)
-                }
-                .padding(.horizontal)
-                .disabled(authManager.isLoading)
-                
-                Spacer()
-                
-                Text("Your data stays private and secure")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
-                Spacer()
+                .padding(.top, 16)
             }
-            .padding()
             .navigationTitle("Sign In")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -2146,7 +2268,7 @@ struct AppSupportView: View {
                 Text("• Track stock in and out from the Stock tab")
                 Text("• View reports and summaries")
             }
-            
+
             Section("Common Questions") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("How do I add an item?")
@@ -2155,7 +2277,7 @@ struct AppSupportView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                
+
                 VStack(alignment: .leading, spacing: 8) {
                     Text("How do I update stock?")
                         .fontWeight(.semibold)
@@ -2163,7 +2285,7 @@ struct AppSupportView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                
+
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Can I manage multiple businesses?")
                         .fontWeight(.semibold)
@@ -2172,14 +2294,37 @@ struct AppSupportView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            
+
             Section("Contact Support") {
-                Link(destination: URL(string: "mailto:support@inventoryapp.com")!) {
-                    Label("Email: support@inventoryapp.com", systemImage: "envelope")
+                HStack {
+                    Image(systemName: "person.fill")
+                        .foregroundColor(.gpOrange)
+                        .frame(width: 24)
+                    Text("Rajat Mittal")
+                        .fontWeight(.semibold)
                 }
-                
-                Text("Phone: +91 1800-123-4567")
-                Text("Hours: Mon-Fri 9AM-6PM IST")
+
+                Link(destination: URL(string: "tel:+918426878666")!) {
+                    HStack {
+                        Image(systemName: "phone.fill")
+                            .foregroundColor(.gpOrange)
+                            .frame(width: 24)
+                        Text("+91 84268 78666")
+                    }
+                }
+
+                Link(destination: URL(string: "mailto:rajat.enzyme@gmail.com")!) {
+                    HStack {
+                        Image(systemName: "envelope.fill")
+                            .foregroundColor(.gpOrange)
+                            .frame(width: 24)
+                        Text("rajat.enzyme@gmail.com")
+                    }
+                }
+
+                Text("Hours: Mon-Sat 9AM-7PM IST")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
         }
         .navigationTitle("App Support")
@@ -2190,39 +2335,51 @@ struct AboutView: View {
     var body: some View {
         List {
             Section {
-                VStack(spacing: 12) {
-                    Image(systemName: "cube.box.fill")
-                        .font(.system(size: 60))
-                        .foregroundColor(.blue)
-                    Text("Inventory Manager")
-                        .font(.title2)
-                        .fontWeight(.bold)
+                VStack(spacing: 14) {
+                    GodownPeLogoMark(size: 72)
+                    HStack(spacing: 0) {
+                        Text("Godown").font(.system(size: 26, weight: .black))
+                        Text("Pe").font(.system(size: 26, weight: .black)).foregroundColor(.gpOrange)
+                    }
                     Text("Version 1.0.0")
+                        .font(.caption)
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity)
                 .padding()
             }
-            
+
             Section("About") {
-                Text("Inventory Manager helps you track your business inventory efficiently. Manage stock, track sales and purchases, and generate detailed reports.")
+                Text("GodownPe helps small business owners track their godown stock easily. Manage multiple shops, record every stock movement, and get instant reports — all from your phone.")
             }
-            
+
             Section("Features") {
-                Text("• Multi-business support")
-                Text("• Real-time stock tracking")
-                Text("• Sales and purchase tracking")
-                Text("• Detailed reports and summaries")
+                Text("• Multi-godown / multi-business support")
+                Text("• Live stock tracking (In & Out)")
+                Text("• Sales and purchase recording")
+                Text("• Detailed PDF reports")
                 Text("• Category-based filtering")
-                Text("• Search functionality")
+                Text("• Google sign-in for data sync")
             }
-            
+
             Section("Developer") {
-                Text("Developed with ❤️ for small businesses")
-                Text("© 2026 Inventory Manager. All rights reserved.")
+                HStack {
+                    Image(systemName: "person.fill").foregroundColor(.gpOrange).frame(width: 24)
+                    Text("Rajat Mittal").fontWeight(.semibold)
+                }
+                Link(destination: URL(string: "mailto:rajat.enzyme@gmail.com")!) {
+                    HStack {
+                        Image(systemName: "envelope.fill").foregroundColor(.gpOrange).frame(width: 24)
+                        Text("rajat.enzyme@gmail.com")
+                    }
+                }
+                Text("Made with care for small businesses in India")
+                    .font(.caption).foregroundColor(.secondary)
+                Text("© 2026 GodownPe. All rights reserved.")
+                    .font(.caption).foregroundColor(.secondary)
             }
         }
-        .navigationTitle("About")
+        .navigationTitle("About GodownPe")
     }
 }
 
@@ -2279,7 +2436,7 @@ struct TermsView: View {
                     
                     Text("Service Description")
                         .font(.headline)
-                    Text("Inventory Manager provides tools for tracking business inventory, sales, and purchases. The app is provided 'as is' without warranties of any kind.")
+                    Text("GodownPe provides tools for tracking business inventory, sales, and purchases. The app is provided 'as is' without warranties of any kind.")
                     
                     Text("User Responsibilities")
                         .font(.headline)
