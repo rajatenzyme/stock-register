@@ -99,6 +99,7 @@ struct Transaction: Identifiable, Codable {
     var quantity: Double
     var pricePerUnit: Double?
     var totalAmount: Double
+    var profit: Double?
     var date: Date
 
     enum TransactionType: String, Codable {
@@ -111,20 +112,17 @@ struct Transaction: Identifiable, Codable {
 
 struct PriceUnit {
     static let units = [
-        "KG", "Bora", "ML", "Litre",
-        "MM", "CM", "Meter", "KM",
-        "Inch", "Feet", "Sq.Inch", "Sq.Ft",
-        "Sq.Meter", "Dozen", "Bundle", "Pouch",
-        "Carat", "Gross", "Minute", "Hour",
-        "Day", "Month", "Year", "Service",
-        "Work", "Pound", "Pair", "Quintal",
-        "Ton", "Plate", "Person", "Ratti",
-        "Trolley", "Truck", "15 litre", "30 kg",
-        "50 kg", "Bag", "Bori", "cartoon",
-        "Danda", "Dibba", "Jar", "jhaal",
-        "katta", "Katta", "katti", "kg",
-        "ladi", "panni", "Peepa", "Thaila",
-        "Thaila 25", "Tin", "Piece"
+        "Bag", "Bora", "Bori", "Bundle", "Carat",
+        "cartoon", "CM", "Danda", "Day", "Dibba",
+        "Dozen", "Feet", "Gross", "Hour", "Inch",
+        "Jar", "jhaal", "Katta", "katti", "KG",
+        "KM", "ladi", "Litre", "Meter", "Minute",
+        "ML", "MM", "Month", "Pair", "panni",
+        "Peepa", "Person", "Piece", "Plate", "Pouch",
+        "Pound", "Quintal", "Ratti", "Service", "Sq.Ft",
+        "Sq.Inch", "Sq.Meter", "Thaila", "Thaila 25", "Tin",
+        "Ton", "Trolley", "Truck", "Work", "Year",
+        "15 litre", "30 kg", "50 kg"
     ]
 }
 
@@ -148,6 +146,7 @@ class InventoryViewModel: ObservableObject {
     @Published var categories: [UserCategory] = []
     @Published var currentCategoryId: UUID?
     @Published var businessName: String = ""
+    @Published var businessAddress: String = ""
     @Published var isLoading: Bool = false
 
     private let db = Firestore.firestore()
@@ -180,6 +179,7 @@ class InventoryViewModel: ObservableObject {
         categories = []
         currentCategoryId = nil
         businessName = ""
+        businessAddress = ""
         initialLoadDone = false
 
         guard !userId.isEmpty else { return }
@@ -250,6 +250,9 @@ class InventoryViewModel: ObservableObject {
                 if let name = data["businessName"] as? String {
                     DispatchQueue.main.async { self.businessName = name }
                 }
+                if let addr = data["businessAddress"] as? String {
+                    DispatchQueue.main.async { self.businessAddress = addr }
+                }
             }
         listeners.append(settingsListener)
     }
@@ -273,13 +276,21 @@ class InventoryViewModel: ObservableObject {
 
     private func saveSettings() {
         guard !userId.isEmpty else { return }
-        var data: [String: Any] = ["businessName": businessName]
+        var data: [String: Any] = [
+            "businessName": businessName,
+            "businessAddress": businessAddress
+        ]
         if let id = currentCategoryId { data["currentCategoryId"] = id.uuidString }
         userRef().collection("settings").document("current").setData(data, merge: true)
     }
 
     func updateBusinessName(_ name: String) {
         businessName = name
+        saveSettings()
+    }
+
+    func updateBusinessAddress(_ address: String) {
+        businessAddress = address
         saveSettings()
     }
 
@@ -298,6 +309,24 @@ class InventoryViewModel: ObservableObject {
     var totalProfit: Double {
         totalSales - totalPurchase
     }
+    
+    var allGodownsTotalPurchase: Double {
+        transactions
+            .filter { $0.type == .purchase || $0.type == .stockIn }
+            .reduce(0) { $0 + $1.totalAmount }
+    }
+
+    var allGodownsTotalSales: Double {
+        transactions
+            .filter { $0.type == .sale || $0.type == .stockOut }
+            .reduce(0) { $0 + $1.totalAmount }
+    }
+
+    var allGodownsTotalProfit: Double {
+        transactions
+            .filter { $0.type == .sale || $0.type == .stockOut }
+            .reduce(0) { $0 + ($1.profit ?? 0) }
+    }
 
     func sortedItems(_ items: [InventoryItem], by sortOption: SortOption) -> [InventoryItem] {
         switch sortOption {
@@ -310,33 +339,153 @@ class InventoryViewModel: ObservableObject {
         }
     }
 
-    func generatePDF(title: String, content: String) -> URL? {
-        let pdfMetaData = [
-            kCGPDFContextCreator: "GodownPe",
-            kCGPDFContextAuthor: "User",
-            kCGPDFContextTitle: title
-        ]
-        let format = UIGraphicsPDFRendererFormat()
-        format.documentInfo = pdfMetaData as [String: Any]
+    func generateStructuredPDF(
+        title: String,
+        godownName: String,
+        headers: [String],
+        rows: [[String]],
+        summary: [(String, String)]
+    ) -> URL? {
+        let pageW: CGFloat = 595.28
+        let pageH: CGFloat = 841.89
+        let mg: CGFloat = 36.0
+        let tableW = pageW - 2.0 * mg
+        let colCount = max(1, headers.count)
 
-        let pageWidth = 8.5 * 72.0
-        let pageHeight = 11 * 72.0
-        let pageRect = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
-
-        let renderer = UIGraphicsPDFRenderer(bounds: pageRect, format: format)
-
-        let data = renderer.pdfData { context in
-            context.beginPage()
-            let titleFont = UIFont.boldSystemFont(ofSize: 24)
-            let bodyFont = UIFont.systemFont(ofSize: 12)
-            let titleAttributes: [NSAttributedString.Key: Any] = [.font: titleFont]
-            let bodyAttributes: [NSAttributedString.Key: Any] = [.font: bodyFont]
-            title.draw(at: CGPoint(x: 50, y: 50), withAttributes: titleAttributes)
-            let textRect = CGRect(x: 50, y: 100, width: pageWidth - 100, height: pageHeight - 150)
-            content.draw(in: textRect, withAttributes: bodyAttributes)
+        var colWidths: [CGFloat] = Array(repeating: tableW / CGFloat(colCount), count: colCount)
+        if colCount > 1 {
+            colWidths[0] = tableW * 0.28
+            let rest = (tableW - colWidths[0]) / CGFloat(colCount - 1)
+            for i in 1..<colCount { colWidths[i] = rest }
         }
 
-        let fileName = "\(title.replacingOccurrences(of: " ", with: "_")).pdf"
+        let orange = UIColor(red: 1.0, green: 0.55, blue: 0.11, alpha: 1.0)
+        let altRow = UIColor(red: 0.96, green: 0.96, blue: 0.96, alpha: 1.0)
+        let border = UIColor(red: 0.80, green: 0.80, blue: 0.80, alpha: 1.0)
+        let rowH: CGFloat = 18.0
+        let hdrH: CGFloat = 22.0
+
+        let df = DateFormatter(); df.dateStyle = .medium; df.timeStyle = .short
+        let genTime = df.string(from: Date())
+
+        let format = UIGraphicsPDFRendererFormat()
+        format.documentInfo = [kCGPDFContextTitle: title] as [String: Any]
+        let renderer = UIGraphicsPDFRenderer(
+            bounds: CGRect(x: 0, y: 0, width: pageW, height: pageH),
+            format: format
+        )
+
+        let data = renderer.pdfData { ctx in
+
+            func newPage() {
+                ctx.beginPage()
+                orange.setFill()
+                UIRectFill(CGRect(x: 0, y: 0, width: pageW, height: 28.0))
+                let a: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 10.0), .foregroundColor: UIColor.white]
+                "GodownPe — \(title) (continued)".draw(at: CGPoint(x: mg, y: 7.0), withAttributes: a)
+            }
+
+            func drawRow(y: CGFloat, cells: [String], isHdr: Bool, isAlt: Bool) {
+                let rh = isHdr ? hdrH : rowH
+                if isHdr { orange.setFill(); UIRectFill(CGRect(x: mg, y: y, width: tableW, height: rh)) }
+                else if isAlt { altRow.setFill(); UIRectFill(CGRect(x: mg, y: y, width: tableW, height: rh)) }
+                var cx = mg
+                for i in 0..<colCount {
+                    let w = colWidths[i]
+                    border.setStroke()
+                    let p = UIBezierPath(rect: CGRect(x: cx, y: y, width: w, height: rh))
+                    p.lineWidth = 0.5; p.stroke()
+                    let text = i < cells.count ? cells[i] : ""
+                    let attrs: [NSAttributedString.Key: Any] = isHdr
+                        ? [.font: UIFont.boldSystemFont(ofSize: 8.0), .foregroundColor: UIColor.white]
+                        : [.font: UIFont.systemFont(ofSize: 7.5), .foregroundColor: UIColor.black]
+                    text.draw(in: CGRect(x: cx + 4.0, y: y + (rh - 10.0) / 2.0, width: w - 8.0, height: rh), withAttributes: attrs)
+                    cx += w
+                }
+            }
+
+            // ---- Page 1 ----
+            ctx.beginPage()
+            var y: CGFloat = 0.0
+
+            // Orange header
+            orange.setFill()
+            UIRectFill(CGRect(x: 0, y: 0, width: pageW, height: 62.0))
+            "GodownPe".draw(at: CGPoint(x: mg, y: 12.0), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 22.0), .foregroundColor: UIColor.white])
+            "Inventory Management".draw(at: CGPoint(x: mg, y: 38.0), withAttributes: [.font: UIFont.systemFont(ofSize: 9.0), .foregroundColor: UIColor.white.withAlphaComponent(0.85)])
+            let gs = genTime.size(withAttributes: [.font: UIFont.systemFont(ofSize: 8.0), .foregroundColor: UIColor.white])
+            genTime.draw(at: CGPoint(x: pageW - mg - gs.width, y: 26.0), withAttributes: [.font: UIFont.systemFont(ofSize: 8.0), .foregroundColor: UIColor.white.withAlphaComponent(0.9)])
+            y = 76.0
+
+            // Business name
+            let bizName = businessName.isEmpty ? "My Business" : businessName
+            bizName.draw(at: CGPoint(x: mg, y: y), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 13.0), .foregroundColor: UIColor.black])
+            y += 18.0
+            if !businessAddress.isEmpty {
+                businessAddress.draw(at: CGPoint(x: mg, y: y), withAttributes: [.font: UIFont.systemFont(ofSize: 9.5), .foregroundColor: UIColor.darkGray])
+                y += 14.0
+            }
+
+            // Report title + godown
+            title.draw(at: CGPoint(x: mg, y: y), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 15.0), .foregroundColor: orange])
+            let gLabel = godownName.isEmpty ? "All Godowns" : godownName
+            let gSize = gLabel.size(withAttributes: [.font: UIFont.systemFont(ofSize: 9.0), .foregroundColor: UIColor.darkGray])
+            gLabel.draw(at: CGPoint(x: pageW - mg - gSize.width, y: y + 3.0), withAttributes: [.font: UIFont.systemFont(ofSize: 9.0), .foregroundColor: UIColor.darkGray])
+            y += 22.0
+
+            // Divider
+            orange.setStroke()
+            let dp = UIBezierPath(); dp.move(to: CGPoint(x: mg, y: y)); dp.addLine(to: CGPoint(x: pageW - mg, y: y)); dp.lineWidth = 1.5; dp.stroke()
+            y += 10.0
+
+            // Table header
+            if !headers.isEmpty {
+                if y + hdrH > pageH - mg - 40.0 { newPage(); y = 38.0 }
+                drawRow(y: y, cells: headers, isHdr: true, isAlt: false)
+                y += hdrH
+            }
+
+            // Data rows
+            if rows.isEmpty {
+                "No data available for this report.".draw(at: CGPoint(x: mg + 8.0, y: y + 8.0),
+                    withAttributes: [.font: UIFont.italicSystemFont(ofSize: 9.0), .foregroundColor: UIColor.gray])
+                y += 28.0
+            } else {
+                for (idx, row) in rows.enumerated() {
+                    if y + rowH > pageH - mg - 40.0 { newPage(); y = 38.0 }
+                    drawRow(y: y, cells: row, isHdr: false, isAlt: idx % 2 == 1)
+                    y += rowH
+                }
+            }
+
+            y += 14.0
+
+            // Summary
+            if !summary.isEmpty {
+                if y + CGFloat(summary.count) * 18.0 + 28.0 > pageH - mg - 40.0 { newPage(); y = 38.0 }
+                "Summary".draw(at: CGPoint(x: mg, y: y), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 11.0), .foregroundColor: UIColor.black])
+                y += 14.0
+                UIColor.lightGray.setStroke()
+                let sp = UIBezierPath(); sp.move(to: CGPoint(x: mg, y: y)); sp.addLine(to: CGPoint(x: pageW - mg, y: y)); sp.lineWidth = 0.75; sp.stroke()
+                y += 7.0
+                for (label, value) in summary {
+                    label.draw(at: CGPoint(x: mg, y: y), withAttributes: [.font: UIFont.systemFont(ofSize: 10.0), .foregroundColor: UIColor.darkGray])
+                    let vs = value.size(withAttributes: [.font: UIFont.boldSystemFont(ofSize: 10.0), .foregroundColor: UIColor.black])
+                    value.draw(at: CGPoint(x: pageW - mg - vs.width, y: y), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 10.0), .foregroundColor: UIColor.black])
+                    y += 16.0
+                }
+            }
+
+            // Footer
+            let fy = pageH - 22.0
+            UIColor.lightGray.setStroke()
+            let flp = UIBezierPath(); flp.move(to: CGPoint(x: mg, y: fy - 5.0)); flp.addLine(to: CGPoint(x: pageW - mg, y: fy - 5.0)); flp.lineWidth = 0.5; flp.stroke()
+            let footerText = "© 2026 GodownPe  •  Generated: \(genTime)"
+            let fSize = footerText.size(withAttributes: [.font: UIFont.systemFont(ofSize: 7.5), .foregroundColor: UIColor.lightGray])
+            footerText.draw(at: CGPoint(x: (pageW - fSize.width) / 2.0, y: fy), withAttributes: [.font: UIFont.systemFont(ofSize: 7.5), .foregroundColor: UIColor.lightGray])
+        }
+
+        let fileName = "\(title.replacingOccurrences(of: " ", with: "_"))_\(Date().formatted(.iso8601.year().month().day())).pdf"
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
         try? data.write(to: url)
         return url
@@ -453,7 +602,9 @@ class InventoryViewModel: ObservableObject {
         if let index = items.firstIndex(where: { $0.id == item.id }) {
             if items[index].currentStock - quantity < 0 { return false }
             items[index].currentStock -= quantity
-            let totalAmount = (pricePerUnit ?? item.sellingPrice ?? 0) * quantity
+            let sellPrice = pricePerUnit ?? item.sellingPrice ?? 0
+            let totalAmount = sellPrice * quantity
+            let profit = (sellPrice - (item.purchasePrice ?? 0)) * quantity
             let transaction = Transaction(
                 categoryId: item.categoryId,
                 itemId: item.id,
@@ -462,6 +613,7 @@ class InventoryViewModel: ObservableObject {
                 quantity: quantity,
                 pricePerUnit: pricePerUnit,
                 totalAmount: totalAmount,
+                profit: profit,
                 date: Date()
             )
             addTransaction(transaction)
@@ -621,42 +773,32 @@ struct HomeView: View {
                     VStack(spacing: 24) {
 
                         // Feature cards
-                        VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 16) {
                             Text("Why GodownPe?")
-                                .font(.title3.bold())
+                                .font(.title2.bold())
                                 .padding(.horizontal)
                                 .padding(.top, 8)
 
-                            FeatureCard(icon: "chart.line.uptrend.xyaxis", title: "Live Stock Tracking",
-                                description: "See your godown stock live — no delays, no confusion")
-                            FeatureCard(icon: "building.2.fill", title: "Multiple Godowns",
-                                description: "Manage all your shops or godowns from one account")
-                            FeatureCard(icon: "doc.text.fill", title: "PDF Reports",
-                                description: "Generate and share stock & sales reports in one tap")
-                            FeatureCard(icon: "arrow.triangle.2.circlepath", title: "Full Transaction History",
-                                description: "Every stock in/out is recorded with date and price")
-                            FeatureCard(icon: "lock.shield.fill", title: "Safe & Private",
-                                description: "Your business data is protected with Google sign-in")
-                        }
-
-                        // Quick start
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("How to Get Started")
-                                .font(.title3.bold())
-                                .padding(.horizontal)
-
-                            VStack(alignment: .leading, spacing: 10) {
-                                QuickStartStep(number: "1", text: "Set your business name in Settings")
-                                QuickStartStep(number: "2", text: "Add items from the Items tab")
-                                QuickStartStep(number: "3", text: "Enter opening stock for each item")
-                                QuickStartStep(number: "4", text: "Record stock In / Out from Stock tab")
-                                QuickStartStep(number: "5", text: "View profits & reports anytime")
+                            LazyVGrid(columns: [
+                                GridItem(.flexible(), spacing: 12),
+                                GridItem(.flexible(), spacing: 12)
+                            ], spacing: 16) {
+                                FeatureGridCard(icon: "chart.line.uptrend.xyaxis", title: "Live Stock Tracking",
+                                    description: "Real-time inventory updates with zero delays")
+                                FeatureGridCard(icon: "building.2.fill", title: "Multiple Locations",
+                                    description: "Manage all your shops from one place")
+                                FeatureGridCard(icon: "doc.text.fill", title: "Instant Reports",
+                                    description: "Generate professional PDFs in seconds")
+                                FeatureGridCard(icon: "arrow.triangle.2.circlepath", title: "Complete History",
+                                    description: "Every transaction tracked automatically")
+                                FeatureGridCard(icon: "lock.shield.fill", title: "Secure & Private",
+                                    description: "Google-powered data protection")
+                                FeatureGridCard(icon: "indianrupeesign.circle.fill", title: "Profit Tracking",
+                                    description: "See your margins and profits clearly")
                             }
-                            .padding()
-                            .background(Color.gpOrangeLight)
-                            .cornerRadius(14)
                             .padding(.horizontal)
                         }
+
 
                         Spacer(minLength: 40)
                     }
@@ -692,6 +834,40 @@ struct FeatureCard: View {
         .background(Color(.secondarySystemBackground))
         .cornerRadius(12)
         .padding(.horizontal)
+    }
+}
+
+struct FeatureGridCard: View {
+    let icon: String
+    let title: String
+    let description: String
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.title)
+                .foregroundColor(.gpOrange)
+                .frame(width: 44, height: 44)
+            
+            VStack(spacing: 6) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                Text(description)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 16)
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, minHeight: 120)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(.systemBackground))
+                .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.08), radius: 4, y: 2)
+        )
     }
 }
 
@@ -745,16 +921,41 @@ struct DashboardView: View {
         return viewModel.transactions
     }
 
+    var dateFilteredTransactions: [Transaction] {
+        let cal = Calendar.current
+        return selectedTransactions.filter { t in
+            switch selectedPeriod {
+            case "Daily":
+                return cal.isDate(t.date, inSameDayAs: selectedDate)
+            case "Weekly":
+                guard let week = cal.dateInterval(of: .weekOfYear, for: selectedDate) else { return false }
+                return week.contains(t.date)
+            case "Monthly":
+                return cal.isDate(t.date, equalTo: selectedDate, toGranularity: .month)
+            case "Yearly":
+                return cal.isDate(t.date, equalTo: selectedDate, toGranularity: .year)
+            default:
+                return true
+            }
+        }
+    }
+
     var totalPurchaseFiltered: Double {
-        selectedTransactions
+        dateFilteredTransactions
             .filter { $0.type == .purchase || $0.type == .stockIn }
             .reduce(0) { $0 + $1.totalAmount }
     }
 
     var totalSalesFiltered: Double {
-        selectedTransactions
+        dateFilteredTransactions
             .filter { $0.type == .sale || $0.type == .stockOut }
             .reduce(0) { $0 + $1.totalAmount }
+    }
+
+    var profitFiltered: Double {
+        dateFilteredTransactions
+            .filter { $0.type == .sale || $0.type == .stockOut }
+            .reduce(0) { $0 + ($1.profit ?? 0) }
     }
 
     var body: some View {
@@ -862,15 +1063,25 @@ struct DashboardView: View {
                             // Date & period row
                             HStack {
                                 Button(action: {
-                                    selectedDate = Calendar.current.date(byAdding: .day, value: -1, to: selectedDate) ?? selectedDate
+                                    let comp: Calendar.Component = selectedPeriod == "Weekly" ? .weekOfYear : selectedPeriod == "Monthly" ? .month : selectedPeriod == "Yearly" ? .year : .day
+                                    selectedDate = Calendar.current.date(byAdding: comp, value: -1, to: selectedDate) ?? selectedDate
                                 }) {
                                     Image(systemName: "chevron.left").foregroundColor(.primary)
                                 }
                                 Spacer()
-                                Text(selectedDate, style: .date).font(.headline)
+                                VStack(spacing: 2) {
+                                    Text(selectedDate, style: .date).font(.headline)
+                                    if selectedPeriod == "Weekly" {
+                                        if let week = Calendar.current.dateInterval(of: .weekOfYear, for: selectedDate) {
+                                            Text("\(week.start, style: .date) – \(Calendar.current.date(byAdding: .day, value: -1, to: week.end) ?? week.end, style: .date)")
+                                                .font(.caption2).foregroundColor(.secondary)
+                                        }
+                                    }
+                                }
                                 Spacer()
                                 Button(action: {
-                                    selectedDate = Calendar.current.date(byAdding: .day, value: 1, to: selectedDate) ?? selectedDate
+                                    let comp: Calendar.Component = selectedPeriod == "Weekly" ? .weekOfYear : selectedPeriod == "Monthly" ? .month : selectedPeriod == "Yearly" ? .year : .day
+                                    selectedDate = Calendar.current.date(byAdding: comp, value: 1, to: selectedDate) ?? selectedDate
                                 }) {
                                     Image(systemName: "chevron.right").foregroundColor(.primary)
                                 }
@@ -901,20 +1112,23 @@ struct DashboardView: View {
                                     Text("Total Profit")
                                         .font(.headline)
                                     Spacer()
-                                    Text("₹ \(String(format: "%.2f", totalSalesFiltered - totalPurchaseFiltered))")
+                                    let profit = profitFiltered
+                                    Text("₹ \(String(format: "%.2f", profit))")
                                         .font(.headline)
-                                        .foregroundColor(totalSalesFiltered - totalPurchaseFiltered >= 0 ? .green : .red)
+                                        .foregroundColor(profit >= 0 ? .green : .red)
                                 }
                                 Divider()
                                 HStack {
                                     Text("Total Purchase").foregroundColor(.secondary)
                                     Spacer()
-                                    Text("₹ \(String(format: "%.2f", totalPurchaseFiltered))").foregroundColor(.red)
+                                    let purchase = selectedCategoryId == nil ? viewModel.allGodownsTotalPurchase : totalPurchaseFiltered
+                                    Text("₹ \(String(format: "%.2f", purchase))").foregroundColor(.red)
                                 }
                                 HStack {
                                     Text("Total Sales").foregroundColor(.secondary)
                                     Spacer()
-                                    Text("₹ \(String(format: "%.2f", totalSalesFiltered))").foregroundColor(.green)
+                                    let sales = selectedCategoryId == nil ? viewModel.allGodownsTotalSales : totalSalesFiltered
+                                    Text("₹ \(String(format: "%.2f", sales))").foregroundColor(.green)
                                 }
                                 Divider()
                                 HStack {
@@ -1134,9 +1348,9 @@ struct TransactionsView: View {
     
     var filteredTransactions: [Transaction] {
         if searchText.isEmpty {
-            return viewModel.currentCategoryTransactions
+            return viewModel.transactions
         }
-        return viewModel.currentCategoryTransactions.filter {
+        return viewModel.transactions.filter {
             $0.itemName.localizedCaseInsensitiveContains(searchText)
         }
     }
@@ -1148,49 +1362,59 @@ struct TransactionsView: View {
                     Button(action: {
                         selectedTransaction = transaction
                     }) {
+                        let isIn = transaction.type == .stockIn || transaction.type == .purchase
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
-                                Image(systemName: transaction.type == .stockIn || transaction.type == .purchase ? "arrow.down.circle.fill" : "arrow.up.circle.fill")
-                                    .foregroundColor(transaction.type == .stockIn || transaction.type == .purchase ? .green : .red)
+                                Image(systemName: isIn ? "arrow.down.circle.fill" : "arrow.up.circle.fill")
+                                    .foregroundColor(isIn ? .green : .red)
                                     .font(.title2)
-                                
+
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(transaction.itemName)
                                         .font(.headline)
                                         .foregroundColor(.primary)
-                                    Text(transaction.type.rawValue)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
+                                    HStack {
+                                        Text(transaction.type.rawValue)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                        Text("•")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                        if let godown = viewModel.categories.first(where: { $0.id == transaction.categoryId }) {
+                                            Text(godown.name)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
                                 }
-                                
+
                                 Spacer()
-                                
+
                                 VStack(alignment: .trailing, spacing: 4) {
                                     Text("₹ \(String(format: "%.2f", transaction.totalAmount))")
                                         .font(.headline)
-                                        .foregroundColor(transaction.type == .stockIn || transaction.type == .purchase ? .green : .red)
+                                        .foregroundColor(isIn ? .green : .red)
                                     Text("\(String(format: "%.1f", transaction.quantity)) units")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
+                                    if !isIn, let profit = transaction.profit {
+                                        Text("Profit: ₹\(String(format: "%.2f", profit))")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundColor(profit >= 0 ? .green : .red)
+                                    }
                                 }
                             }
-                            
+
                             HStack {
                                 Text(transaction.date, style: .date)
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                                Text("•")
-                                    .foregroundColor(.secondary)
+                                    .font(.caption2).foregroundColor(.secondary)
+                                Text("•").foregroundColor(.secondary)
                                 Text(transaction.date, style: .time)
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                                
+                                    .font(.caption2).foregroundColor(.secondary)
                                 Spacer()
-                                
                                 if let price = transaction.pricePerUnit {
                                     Text("@ ₹\(String(format: "%.2f", price))/unit")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
+                                        .font(.caption2).foregroundColor(.secondary)
                                 }
                             }
                         }
@@ -1257,15 +1481,141 @@ struct ExportURL: Identifiable {
 struct ReportDetailView: View {
     @ObservedObject var viewModel: InventoryViewModel
     let reportType: String
-    @State private var exportURL: ExportURL?
+    @State private var previewURL: ExportURL?
+    @State private var selectedGodownId: UUID? = nil
 
+    var selectedGodownName: String {
+        guard let id = selectedGodownId,
+              let cat = viewModel.categories.first(where: { $0.id == id }) else { return "" }
+        return cat.name
+    }
+
+    var filteredItems: [InventoryItem] {
+        guard let id = selectedGodownId else { return viewModel.items }
+        return viewModel.items.filter { $0.categoryId == id }
+    }
+
+    var filteredTransactions: [Transaction] {
+        guard let id = selectedGodownId else { return viewModel.transactions }
+        return viewModel.transactions.filter { $0.categoryId == id }
+    }
+
+    // MARK: Structured data for table PDF
+    var reportHeaders: [String] {
+        switch reportType {
+        case "Daily Sales", "Monthly Sales", "Yearly Sales":
+            return ["Item", "Qty", "Unit", "Price/Unit", "Amount", "Date"]
+        case "Stock Summary":
+            return ["Item", "Unit", "Opening", "Curr.Stock", "Purchase ₹", "Value ₹"]
+        case "Low Stock":
+            return ["Item", "Unit", "Current Stock"]
+        case "Profit & Loss":
+            return ["Item", "Qty", "Unit", "Sell Price", "Purchase", "Profit"]
+        default:
+            return []
+        }
+    }
+
+    var reportRows: [[String]] {
+        let df = DateFormatter(); df.dateStyle = .short; df.timeStyle = .none
+        switch reportType {
+        case "Daily Sales", "Monthly Sales", "Yearly Sales":
+            return filteredTransactions
+                .filter { $0.type == .sale || $0.type == .stockOut }
+                .map { t in [
+                    t.itemName,
+                    String(format: "%.1f", t.quantity),
+                    viewModel.items.first(where: { $0.id == t.itemId })?.priceUnit ?? "",
+                    t.pricePerUnit.map { "₹\(String(format: "%.2f", $0))" } ?? "-",
+                    "₹\(String(format: "%.2f", t.totalAmount))",
+                    df.string(from: t.date)
+                ]}
+        case "Stock Summary":
+            return filteredItems.map { item in [
+                item.name,
+                item.priceUnit,
+                String(format: "%.1f", item.openingStock),
+                String(format: "%.1f", item.currentStock),
+                item.purchasePrice.map { "₹\(String(format: "%.2f", $0))" } ?? "-",
+                "₹\(String(format: "%.2f", item.currentStock * (item.purchasePrice ?? 0)))"
+            ]}
+        case "Low Stock":
+            return filteredItems.filter { $0.currentStock <= 5 }.map { item in [
+                item.name, item.priceUnit, String(format: "%.1f", item.currentStock)
+            ]}
+        case "Profit & Loss":
+            return filteredTransactions
+                .filter { $0.type == .sale || $0.type == .stockOut }
+                .map { t in
+                    let item = viewModel.items.first(where: { $0.id == t.itemId })
+                    return [
+                        t.itemName,
+                        String(format: "%.1f", t.quantity),
+                        item?.priceUnit ?? "",
+                        t.pricePerUnit.map { "₹\(String(format: "%.2f", $0))" } ?? "-",
+                        item?.purchasePrice.map { "₹\(String(format: "%.2f", $0))" } ?? "-",
+                        t.profit.map { "₹\(String(format: "%.2f", $0))" } ?? "-"
+                    ]
+                }
+        default:
+            return []
+        }
+    }
+
+    var reportSummary: [(String, String)] {
+        switch reportType {
+        case "Daily Sales", "Monthly Sales", "Yearly Sales":
+            let total = filteredTransactions.filter { $0.type == .sale || $0.type == .stockOut }.reduce(0) { $0 + $1.totalAmount }
+            return [("Total Transactions", "\(filteredTransactions.filter { $0.type == .sale || $0.type == .stockOut }.count)"),
+                    ("Total Sales Amount", "₹\(String(format: "%.2f", total))")]
+        case "Stock Summary":
+            let value = filteredItems.reduce(0.0) { $0 + $1.currentStock * ($1.purchasePrice ?? 0) }
+            return [("Total Items", "\(filteredItems.count)"),
+                    ("Total Stock Value", "₹\(String(format: "%.2f", value))")]
+        case "Low Stock":
+            let low = filteredItems.filter { $0.currentStock <= 5 }
+            return [("Low Stock Items", "\(low.count)"), ("Out of Stock", "\(low.filter { $0.currentStock == 0 }.count)")]
+        case "Profit & Loss":
+            let sales = filteredTransactions.filter { $0.type == .sale || $0.type == .stockOut }.reduce(0.0) { $0 + $1.totalAmount }
+            let purchase = filteredTransactions.filter { $0.type == .purchase || $0.type == .stockIn }.reduce(0.0) { $0 + $1.totalAmount }
+            let profit = filteredTransactions.filter { $0.type == .sale || $0.type == .stockOut }.reduce(0.0) { $0 + ($1.profit ?? 0) }
+            return [("Total Sales", "₹\(String(format: "%.2f", sales))"),
+                    ("Total Purchase", "₹\(String(format: "%.2f", purchase))"),
+                    ("Net Profit", "₹\(String(format: "%.2f", profit))")]
+        default:
+            return []
+        }
+    }
+
+    // In-app display content (text-based cards)
     var reportContent: String {
         switch reportType {
-        case "Daily Sales", "Monthly Sales", "Yearly Sales": return generateSalesReport()
-        case "Stock Summary": return generateStockSummary()
-        case "Low Stock": return generateLowStockReport()
-        case "Profit & Loss": return generateProfitLossReport()
-        default: return ""
+        case "Daily Sales", "Monthly Sales", "Yearly Sales":
+            let txns = filteredTransactions.filter { $0.type == .sale || $0.type == .stockOut }
+            var r = "Total Sales: ₹\(String(format: "%.2f", txns.reduce(0) { $0 + $1.totalAmount }))\n\n"
+            for t in txns.prefix(30) {
+                r += "\(t.itemName)\nQty: \(String(format: "%.1f", t.quantity))  Amount: ₹\(String(format: "%.2f", t.totalAmount))\nDate: \(t.date.formatted())\n\n"
+            }
+            return r
+        case "Stock Summary":
+            var r = "Total Items: \(filteredItems.count)\n\n"
+            for item in filteredItems {
+                r += "\(item.name)\nStock: \(String(format: "%.1f", item.currentStock)) \(item.priceUnit)"
+                if let p = item.purchasePrice { r += "  Purchase: ₹\(String(format: "%.2f", p))" }
+                r += "\n\n"
+            }
+            return r
+        case "Low Stock":
+            let low = filteredItems.filter { $0.currentStock <= 5 }
+            if low.isEmpty { return "No low stock items." }
+            return low.map { "\($0.name)\nStock: \(String(format: "%.1f", $0.currentStock)) \($0.priceUnit)" }.joined(separator: "\n\n")
+        case "Profit & Loss":
+            let sales = filteredTransactions.filter { $0.type == .sale || $0.type == .stockOut }.reduce(0.0) { $0 + $1.totalAmount }
+            let purchase = filteredTransactions.filter { $0.type == .purchase || $0.type == .stockIn }.reduce(0.0) { $0 + $1.totalAmount }
+            let profit = filteredTransactions.filter { $0.type == .sale || $0.type == .stockOut }.reduce(0.0) { $0 + ($1.profit ?? 0) }
+            return "Total Sales: ₹\(String(format: "%.2f", sales))\n\nTotal Purchases: ₹\(String(format: "%.2f", purchase))\n\nNet Profit: ₹\(String(format: "%.2f", profit))"
+        default:
+            return ""
         }
     }
 
@@ -1273,33 +1623,54 @@ struct ReportDetailView: View {
         ZStack(alignment: .bottom) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    // Header
                     LinearGradient(colors: [.gpOrange, .gpOrangeDark], startPoint: .topLeading, endPoint: .bottomTrailing)
                         .frame(height: 80)
                         .overlay(
-                            Text(reportType)
-                                .font(.title2.bold())
-                                .foregroundColor(.white)
-                                .padding()
-                            , alignment: .bottomLeading
+                            Text(reportType).font(.title2.bold()).foregroundColor(.white).padding(),
+                            alignment: .bottomLeading
                         )
 
-                    // Content
+                    // Godown filter
+                    Menu {
+                        Button(action: { selectedGodownId = nil }) {
+                            HStack {
+                                Text("All Godowns")
+                                if selectedGodownId == nil { Image(systemName: "checkmark") }
+                            }
+                        }
+                        Divider()
+                        ForEach(viewModel.categories) { cat in
+                            Button(action: { selectedGodownId = cat.id }) {
+                                HStack {
+                                    Text(cat.name)
+                                    if selectedGodownId == cat.id { Image(systemName: "checkmark") }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "line.3.horizontal.decrease.circle.fill").foregroundColor(.gpOrange).font(.title3)
+                            Text(selectedGodownName.isEmpty ? "All Godowns" : selectedGodownName)
+                                .font(.subheadline.weight(.semibold)).foregroundColor(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.down").font(.caption).foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(Color(.systemBackground)).cornerRadius(12)
+                        .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.07), radius: 4, y: 2)
+                    }
+                    .padding()
+
+                    // In-app content cards
                     VStack(alignment: .leading, spacing: 16) {
                         ForEach(reportContent.components(separatedBy: "\n\n"), id: \.self) { block in
                             if !block.trimmingCharacters(in: .whitespaces).isEmpty {
                                 VStack(alignment: .leading, spacing: 4) {
                                     ForEach(block.components(separatedBy: "\n"), id: \.self) { line in
                                         if !line.isEmpty {
-                                            if line.hasSuffix(":") || (!line.contains(":") && !line.contains("₹") && !line.contains("Date:") && line.count < 40) {
-                                                Text(line)
-                                                    .font(.subheadline.bold())
-                                                    .foregroundColor(.primary)
-                                            } else {
-                                                Text(line)
-                                                    .font(.subheadline)
-                                                    .foregroundColor(.secondary)
-                                            }
+                                            Text(line)
+                                                .font(line.contains("₹") || line.contains(":") ? .subheadline : .subheadline.bold())
+                                                .foregroundColor(line.contains("₹") ? .secondary : .primary)
                                         }
                                     }
                                 }
@@ -1312,25 +1683,25 @@ struct ReportDetailView: View {
                         }
                     }
                     .padding()
-                    .padding(.bottom, 80)
+                    .padding(.bottom, 100)
                 }
             }
             .background(Color(.secondarySystemBackground))
 
-            // Export button
             Button(action: {
-                if let url = viewModel.generatePDF(title: reportType, content: reportContent) {
-                    exportURL = ExportURL(url: url)
-                }
+                let url = viewModel.generateStructuredPDF(
+                    title: reportType,
+                    godownName: selectedGodownName,
+                    headers: reportHeaders,
+                    rows: reportRows,
+                    summary: reportSummary
+                )
+                if let url = url { previewURL = ExportURL(url: url) }
             }) {
                 Label("Export PDF", systemImage: "arrow.up.doc")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(
-                        LinearGradient(colors: [.gpOrange, .gpOrangeDark], startPoint: .leading, endPoint: .trailing)
-                    )
+                    .font(.headline).foregroundColor(.white)
+                    .frame(maxWidth: .infinity).padding()
+                    .background(LinearGradient(colors: [.gpOrange, .gpOrangeDark], startPoint: .leading, endPoint: .trailing))
                     .cornerRadius(16)
                     .shadow(color: .gpOrange.opacity(0.35), radius: 6, y: 3)
             }
@@ -1338,43 +1709,9 @@ struct ReportDetailView: View {
         }
         .navigationTitle(reportType)
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(item: $exportURL) { item in
-            ShareSheet(items: [item.url])
+        .sheet(item: $previewURL) { item in
+            PDFPreviewView(url: item.url)
         }
-    }
-
-    func generateSalesReport() -> String {
-        var report = "Business: \(viewModel.businessName)\n\n"
-        report += "Total Sales: ₹\(String(format: "%.2f", viewModel.totalSales))\n\n"
-        report += "Transactions:\n\n"
-        for t in viewModel.currentCategoryTransactions.filter({ $0.type == .sale || $0.type == .stockOut }).prefix(50) {
-            report += "\(t.itemName)\nAmount: ₹\(String(format: "%.2f", t.totalAmount))\nQty: \(String(format: "%.1f", t.quantity))\nDate: \(t.date.formatted())\n\n"
-        }
-        return report
-    }
-
-    func generateStockSummary() -> String {
-        var report = "Business: \(viewModel.businessName)\n\nTotal Items: \(viewModel.currentCategoryItems.count)\n\nItems:\n\n"
-        for item in viewModel.currentCategoryItems {
-            report += "\(item.name)\nStock: \(String(format: "%.1f", item.currentStock)) \(item.priceUnit)\n"
-            if let p = item.sellingPrice { report += "Price: ₹\(String(format: "%.2f", p))\n" }
-            report += "\n"
-        }
-        return report
-    }
-
-    func generateLowStockReport() -> String {
-        var report = "Business: \(viewModel.businessName)\n\nLow Stock Items:\n\n"
-        let low = viewModel.currentCategoryItems.filter { $0.currentStock <= 5 }
-        for item in low {
-            report += "\(item.name)\nStock: \(String(format: "%.1f", item.currentStock)) \(item.priceUnit)\n\n"
-        }
-        if low.isEmpty { report += "No low stock items found." }
-        return report
-    }
-
-    func generateProfitLossReport() -> String {
-        "Business: \(viewModel.businessName)\n\nProfit & Loss Statement\n\nTotal Sales: ₹\(String(format: "%.2f", viewModel.totalSales))\nTotal Purchases: ₹\(String(format: "%.2f", viewModel.totalPurchase))\nNet Profit/Loss: ₹\(String(format: "%.2f", viewModel.totalProfit))"
     }
 }
 
@@ -1398,16 +1735,62 @@ struct ShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
+struct PDFPreviewView: UIViewControllerRepresentable {
+    let url: URL
+    
+    func makeUIViewController(context: Context) -> UINavigationController {
+        let pdfView = PDFView()
+        if let document = PDFDocument(url: url) {
+            pdfView.document = document
+        }
+        
+        let viewController = UIViewController()
+        viewController.view = pdfView
+        viewController.navigationItem.title = "PDF Preview"
+        viewController.navigationItem.rightBarButtonItem = UIBarButtonItem(
+            barButtonSystemItem: .action,
+            target: context.coordinator,
+            action: #selector(Coordinator.shareAction)
+        )
+        
+        let navController = UINavigationController(rootViewController: viewController)
+        navController.navigationBar.prefersLargeTitles = false
+        
+        let coordinator = context.coordinator
+        coordinator.url = url
+        coordinator.navController = navController
+        
+        return navController
+    }
+    
+    func updateUIViewController(_ uiViewController: UINavigationController, context: Context) {}
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+    
+    class Coordinator: NSObject {
+        var url: URL?
+        var navController: UINavigationController?
+        
+        @objc func shareAction() {
+            guard let url = url, let navController = navController else { return }
+            let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+            navController.present(activityVC, animated: true)
+        }
+    }
+}
+
 struct DetailedSummaryView: View {
     @ObservedObject var viewModel: InventoryViewModel
 
     var body: some View {
         List {
-            Section("Summary") {
+            Section("Summary (All Godowns)") {
                 HStack {
                     Text("Total Items")
                     Spacer()
-                    Text("\(viewModel.currentCategoryItems.count)")
+                    Text("\(viewModel.items.count)")
                         .fontWeight(.semibold)
                 }
 
@@ -1421,7 +1804,7 @@ struct DetailedSummaryView: View {
                 HStack {
                     Text("Total Purchase")
                     Spacer()
-                    Text("₹ \(String(format: "%.2f", viewModel.totalPurchase))")
+                    Text("₹ \(String(format: "%.2f", viewModel.allGodownsTotalPurchase))")
                         .fontWeight(.semibold)
                         .foregroundColor(.red)
                 }
@@ -1429,7 +1812,7 @@ struct DetailedSummaryView: View {
                 HStack {
                     Text("Total Sales")
                     Spacer()
-                    Text("₹ \(String(format: "%.2f", viewModel.totalSales))")
+                    Text("₹ \(String(format: "%.2f", viewModel.allGodownsTotalSales))")
                         .fontWeight(.semibold)
                         .foregroundColor(.green)
                 }
@@ -1437,28 +1820,39 @@ struct DetailedSummaryView: View {
                 HStack {
                     Text("Net Profit")
                     Spacer()
-                    Text("₹ \(String(format: "%.2f", viewModel.totalProfit))")
+                    Text("₹ \(String(format: "%.2f", viewModel.allGodownsTotalProfit))")
                         .fontWeight(.semibold)
-                        .foregroundColor(viewModel.totalProfit >= 0 ? .green : .red)
+                        .foregroundColor(viewModel.allGodownsTotalProfit >= 0 ? .green : .red)
                 }
             }
 
-            Section("Recent Transactions") {
-                ForEach(viewModel.currentCategoryTransactions.prefix(20)) { transaction in
+            Section("Recent Transactions (All Godowns)") {
+                ForEach(viewModel.transactions.prefix(30)) { transaction in
                     HStack {
-                        VStack(alignment: .leading) {
+                        VStack(alignment: .leading, spacing: 2) {
                             Text(transaction.itemName)
                                 .font(.subheadline)
-                            Text(transaction.type.rawValue)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                            HStack {
+                                Text(transaction.type.rawValue)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text("•")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                if let godown = viewModel.categories.first(where: { $0.id == transaction.categoryId }) {
+                                    Text(godown.name)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
                         }
 
                         Spacer()
 
-                        VStack(alignment: .trailing) {
+                        VStack(alignment: .trailing, spacing: 2) {
                             Text("₹ \(String(format: "%.2f", transaction.totalAmount))")
                                 .fontWeight(.semibold)
+                                .foregroundColor(transaction.type == .stockIn || transaction.type == .purchase ? .red : .green)
                             Text("\(String(format: "%.1f", transaction.quantity)) units")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -1471,7 +1865,7 @@ struct DetailedSummaryView: View {
     }
 
     func calculateTotalValue() -> Double {
-        viewModel.currentCategoryItems.reduce(0) { total, item in
+        viewModel.items.reduce(0) { total, item in
             total + (item.currentStock * (item.sellingPrice ?? 0))
         }
     }
@@ -1606,12 +2000,9 @@ struct AddItemView: View {
     @State private var name = ""
     @State private var purchasePrice = ""
     @State private var mrp = ""
-    @State private var sellingPrice = ""
     @State private var priceUnit = "Piece"
     @State private var openingStock = ""
     @State private var selectedCategoryId: UUID? = nil
-    @State private var showingAddGodown = false
-    @State private var newGodownName = ""
 
     var body: some View {
         NavigationView {
@@ -1622,7 +2013,7 @@ struct AddItemView: View {
 
                 Section {
                     if viewModel.categories.isEmpty {
-                        Text("No godowns yet. Add one below.")
+                        Text("No godowns available.")
                             .foregroundColor(.secondary)
                             .font(.subheadline)
                     } else {
@@ -1634,30 +2025,6 @@ struct AddItemView: View {
                         }
                         .pickerStyle(.menu)
                         .tint(.gpOrange)
-                    }
-
-                    if showingAddGodown {
-                        HStack {
-                            TextField("Godown name", text: $newGodownName)
-                            Button("Add") {
-                                let trimmed = newGodownName.trimmingCharacters(in: .whitespaces)
-                                guard !trimmed.isEmpty else { return }
-                                let cat = UserCategory(name: trimmed, dateCreated: Date())
-                                viewModel.addCategory(cat)
-                                selectedCategoryId = cat.id
-                                newGodownName = ""
-                                showingAddGodown = false
-                            }
-                            .disabled(newGodownName.trimmingCharacters(in: .whitespaces).isEmpty)
-                            .foregroundColor(.gpOrange)
-                            .fontWeight(.semibold)
-                        }
-                    } else {
-                        Button(action: { showingAddGodown = true }) {
-                            Label("Add New Godown", systemImage: "plus.circle.fill")
-                                .foregroundColor(.gpOrange)
-                                .font(.subheadline)
-                        }
                     }
                 } header: {
                     Text("Godown / Category")
@@ -1677,14 +2044,6 @@ struct AddItemView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                         TextField("0.00", text: $mrp)
-                            .keyboardType(.decimalPad)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Selling Price")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        TextField("0.00", text: $sellingPrice)
                             .keyboardType(.decimalPad)
                     }
 
@@ -1736,13 +2095,26 @@ struct AddItemView: View {
             name: name,
             purchasePrice: Double(purchasePrice),
             mrp: Double(mrp),
-            sellingPrice: Double(sellingPrice),
+            sellingPrice: nil,
             priceUnit: priceUnit,
             openingStock: stock,
             currentStock: stock,
             dateAdded: Date()
         )
         viewModel.addItem(item)
+        if stock > 0 {
+            let txn = Transaction(
+                categoryId: categoryId,
+                itemId: item.id,
+                itemName: item.name,
+                type: .stockIn,
+                quantity: stock,
+                pricePerUnit: item.purchasePrice,
+                totalAmount: (item.purchasePrice ?? 0) * stock,
+                date: item.dateAdded
+            )
+            viewModel.addTransaction(txn)
+        }
         dismiss()
     }
 }
@@ -1872,11 +2244,29 @@ struct StockUpdateView: View {
                     Text("Current Stock: \(String(format: "%.1f", item.currentStock)) \(item.priceUnit)")
                         .foregroundColor(.secondary)
                     
-                    if !isStockIn, let qty = Double(quantity) {
-                        if item.currentStock - qty < 0 {
-                            Text("⚠️ Insufficient stock. Available: \(String(format: "%.1f", item.currentStock))")
-                                .foregroundColor(.red)
+                    if !isStockIn {
+                        if let purchasePrice = item.purchasePrice {
+                            Text("Purchase Price: ₹\(String(format: "%.2f", purchasePrice))")
+                                .foregroundColor(.secondary)
                                 .font(.caption)
+                        }
+                        if let mrp = item.mrp {
+                            Text("MRP: ₹\(String(format: "%.2f", mrp))")
+                                .foregroundColor(.secondary)
+                                .font(.caption)
+                        }
+                        if let sellingPrice = item.sellingPrice {
+                            Text("Selling Price: ₹\(String(format: "%.2f", sellingPrice))")
+                                .foregroundColor(.secondary)
+                                .font(.caption)
+                        }
+                        
+                        if let qty = Double(quantity) {
+                            if item.currentStock - qty < 0 {
+                                Text("⚠️ Insufficient stock. Available: \(String(format: "%.1f", item.currentStock))")
+                                    .foregroundColor(.red)
+                                    .font(.caption)
+                            }
                         }
                     }
                 }
@@ -2029,6 +2419,8 @@ struct SettingsView: View {
     @State private var showingLoginSheet = false
     @State private var editingBusinessName = false
     @State private var draftBusinessName = ""
+    @State private var editingAddress = false
+    @State private var draftAddress = ""
 
     var body: some View {
         NavigationView {
@@ -2079,15 +2471,13 @@ struct SettingsView: View {
                 Section("Business Profile") {
                     if editingBusinessName {
                         HStack {
-                            TextField("Business Name", text: $draftBusinessName)
-                                .textFieldStyle(.plain)
+                            TextField("Business Name", text: $draftBusinessName).textFieldStyle(.plain)
                             Spacer()
                             Button("Save") {
                                 viewModel.updateBusinessName(draftBusinessName)
                                 editingBusinessName = false
                             }
-                            .foregroundColor(.gpOrange)
-                            .fontWeight(.semibold)
+                            .foregroundColor(.gpOrange).fontWeight(.semibold)
                         }
                     } else {
                         HStack {
@@ -2101,28 +2491,53 @@ struct SettingsView: View {
                             .foregroundColor(.gpOrange)
                         }
                     }
+
+                    if editingAddress {
+                        HStack {
+                            TextField("Business Address", text: $draftAddress).textFieldStyle(.plain)
+                            Spacer()
+                            Button("Save") {
+                                viewModel.updateBusinessAddress(draftAddress)
+                                editingAddress = false
+                            }
+                            .foregroundColor(.gpOrange).fontWeight(.semibold)
+                        }
+                    } else {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Address").font(.caption).foregroundColor(.secondary)
+                                Text(viewModel.businessAddress.isEmpty ? "Set address…" : viewModel.businessAddress)
+                                    .foregroundColor(viewModel.businessAddress.isEmpty ? .secondary : .primary)
+                                    .font(.subheadline)
+                            }
+                            Spacer()
+                            Button("Edit") {
+                                draftAddress = viewModel.businessAddress
+                                editingAddress = true
+                            }
+                            .foregroundColor(.gpOrange)
+                        }
+                    }
                 }
 
                 // Categories
-                Section("Categories") {
+                Section("Godowns") {
                     ForEach(viewModel.categories) { cat in
                         HStack {
+                            Image(systemName: "building.2.fill")
+                                .foregroundColor(.gpOrange)
+                                .font(.caption)
                             Text(cat.name)
                             Spacer()
                             Text("\(viewModel.items.filter { $0.categoryId == cat.id }.count) items")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                            if cat.id == viewModel.currentCategoryId {
-                                Image(systemName: "checkmark.circle.fill").foregroundColor(.gpOrange).font(.caption)
-                            }
                         }
-                        .contentShape(Rectangle())
-                        .onTapGesture { viewModel.switchCategory(to: cat.id) }
                     }
                     .onDelete(perform: deleteCategory)
 
                     Button(action: { showingAddCategory = true }) {
-                        Label("Add Category", systemImage: "plus.circle.fill")
+                        Label("Add Godown", systemImage: "plus.circle.fill")
                             .foregroundColor(.gpOrange)
                     }
                 }
@@ -2296,23 +2711,6 @@ struct AppSupportView: View {
             }
 
             Section("Contact Support") {
-                HStack {
-                    Image(systemName: "person.fill")
-                        .foregroundColor(.gpOrange)
-                        .frame(width: 24)
-                    Text("Rajat Mittal")
-                        .fontWeight(.semibold)
-                }
-
-                Link(destination: URL(string: "tel:+918426878666")!) {
-                    HStack {
-                        Image(systemName: "phone.fill")
-                            .foregroundColor(.gpOrange)
-                            .frame(width: 24)
-                        Text("+91 84268 78666")
-                    }
-                }
-
                 Link(destination: URL(string: "mailto:rajat.enzyme@gmail.com")!) {
                     HStack {
                         Image(systemName: "envelope.fill")
@@ -2321,7 +2719,6 @@ struct AppSupportView: View {
                         Text("rajat.enzyme@gmail.com")
                     }
                 }
-
                 Text("Hours: Mon-Sat 9AM-7PM IST")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -2351,15 +2748,6 @@ struct AboutView: View {
 
             Section("About") {
                 Text("GodownPe helps small business owners track their godown stock easily. Manage multiple shops, record every stock movement, and get instant reports — all from your phone.")
-            }
-
-            Section("Features") {
-                Text("• Multi-godown / multi-business support")
-                Text("• Live stock tracking (In & Out)")
-                Text("• Sales and purchase recording")
-                Text("• Detailed PDF reports")
-                Text("• Category-based filtering")
-                Text("• Google sign-in for data sync")
             }
 
             Section("Developer") {
